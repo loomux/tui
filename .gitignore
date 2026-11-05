@@ -1,0 +1,7 @@
+# The binary from `go build ./cmd/loomux`.
+/loomux
+
+# A local workspace for developing against an unmerged server change;
+# never committed (the pin in go.mod is always a release tag).
+go.work
+go.work.sum
