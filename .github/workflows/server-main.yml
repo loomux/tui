@@ -1,0 +1,63 @@
+# Drift check (R2, LOOM-277; the design's "Repository": "Drift is caught
+# early"): every night, the client's tests against github.com/Loomux/server
+# at main instead of the pinned release, so a server change that would
+# break the client shows up before the next pin bump.
+#
+# Non-blocking: it runs on a schedule (or by hand) and is no pull
+# request's status check. A failure is a red run here and a note to look
+# before bumping the pin; it never blocks a merge.
+#
+# Actions are pinned by commit, with the release in a comment.
+name: server-main
+
+on:
+  schedule:
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: server-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  server-main:
+    # Not in forks.
+    if: github.repository == 'loomux/tui'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # main's newest commit, in this run's go.mod only: its release tag
+      # (every server merge gets one), or a pseudo-version while main is
+      # ahead of its newest tag. Fetched directly from GitHub, since the
+      # module proxy may still have an older main. If main needs a newer
+      # Go, the go command fetches it (GOTOOLCHAIN isn't pinned here).
+      - name: Use the server's main
+        env:
+          GOPRIVATE: github.com/Loomux/server
+        run: |
+          go get github.com/Loomux/server@main
+          go mod tidy
+          v="$(go list -m -f '{{.Version}}' github.com/Loomux/server)"
+          echo "Server: github.com/Loomux/server ${v}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - run: go vet ./...
+
+      # Everything but the two tests that hold go.mod to the committed pin:
+      # this run's go.mod moves it on purpose (the constant no longer
+      # matches, and the version may be a pseudo-version).
+      # TestUsesAreInServerContract checks uses.txt against main's contract
+      # file.
+      - run: go test -race -shuffle=on -skip '^(TestGoModPinIsATag|TestServerPinMatchesGoMod)$' ./...
