@@ -20,8 +20,8 @@ handoff (see below), and the change goes to the design doc through a PR in
 ## Status
 
 **Pre-release.** R1 (repository bootstrap) gives the module, `cmd/loomux`
-with only `version`, and the generated server pin. CI (R2) and releases (R3)
-come next.
+with only `version`, and the generated server pin. R2 adds CI. Releases
+(R3) come next.
 
 ## The server pin
 
@@ -86,6 +86,12 @@ messages or PR text. Use `example.net` / `example.org` hosts in examples.
 
 - Go at the version in `go.mod`; `gofmt`, `go vet` and `go test -race ./...`
   are clean before a PR.
+- CI (`.github/workflows/ci.yml`) runs those plus `go mod tidy -diff`,
+  the generated pin, "the server isn't linked in", the changelog check and
+  `govulncheck`, all on the toolchain `go.mod` names. The pin rules and
+  the `uses.txt` contract check are Go tests, so they run locally too.
+  `server-main.yml` runs the tests nightly against the server's `main`;
+  it blocks nothing.
 - Each PR with a user-visible change adds a changelog fragment in
   `changes/` (see `changes/README.md`).
 - Add a dependency only when code uses it. The UI stack (Bubble Tea,
