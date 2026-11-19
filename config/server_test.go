@@ -69,3 +69,30 @@ func TestCheckServerRefuses(t *testing.T) {
 		}
 	}
 }
+
+// A rejected URL is never repeated with its user name, password, query or
+// fragment: any of them may hold a secret, and errors get printed.
+func TestCheckServerErrorsHideSecrets(t *testing.T) {
+	for _, raw := range []string{
+		"https://example.net/?token=SECRET",
+		"https://example.net/#SECRET",
+		"http://example.net/?token=SECRET",
+		"http://example.net/#token=SECRET",
+		"http://user:SECRET@example.net",
+		"ftp://example.net/?SECRET",
+		"example.net/?token=SECRET",
+		"user:SECRET@example.net",
+		"https://exa mple.net/?SECRET",
+		"https://example.net/api/v1?SECRET",
+		"https://example.net/api/v1#SECRET",
+	} {
+		_, err := CheckServer(raw)
+		if err == nil {
+			t.Errorf("CheckServer(%q) accepted", raw)
+			continue
+		}
+		if strings.Contains(err.Error(), "SECRET") {
+			t.Errorf("CheckServer(%q) error %q repeats the secret", raw, err)
+		}
+	}
+}

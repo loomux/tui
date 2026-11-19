@@ -18,46 +18,47 @@ import (
 // repeat a password.
 func CheckServer(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
+	shown := display(raw)
 	if raw == "" {
 		return "", fmt.Errorf("no server URL: give an https:// URL")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("server URL %s: not a URL", redact(raw))
+		return "", fmt.Errorf("server URL %s: not a URL", shown)
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme == "" || (u.Host == "" && u.Opaque != "") {
 		// "loomux.example.net", "loomux.example.net:443", "//host",
 		// "localhost:8080": a host without a scheme. url.Parse reads the
 		// ones with a port as scheme "host" and opaque "port".
-		return "", fmt.Errorf("server URL %s has no scheme: use https://%s", redact(raw), strings.TrimPrefix(redact(raw), "//"))
+		return "", fmt.Errorf("server URL %s has no scheme: use https://%s", shown, strings.TrimSuffix(strings.TrimPrefix(shown, "//"), "…"))
 	}
 	if u.User != nil {
-		return "", fmt.Errorf("server URL %s has a user name or password: remove it (the token is stored apart from the config)", redact(raw))
+		return "", fmt.Errorf("server URL %s has a user name or password: remove it (the token is stored apart from the config)", shown)
 	}
 	if u.Host == "" || u.Hostname() == "" {
-		return "", fmt.Errorf("server URL %s has no host", raw)
+		return "", fmt.Errorf("server URL %s has no host", shown)
 	}
 	if u.RawQuery != "" || u.ForceQuery {
-		return "", fmt.Errorf("server URL %s has a query: give the server's root URL", raw)
+		return "", fmt.Errorf("server URL %s has a query: give the server's root URL", shown)
 	}
 	if u.Fragment != "" || strings.Contains(raw, "#") {
-		return "", fmt.Errorf("server URL %s has a fragment: give the server's root URL", raw)
+		return "", fmt.Errorf("server URL %s has a fragment: give the server's root URL", shown)
 	}
 	host := strings.ToLower(u.Hostname())
 	switch scheme {
 	case "https":
 	case "http":
 		if !loopback(host) {
-			return "", fmt.Errorf("server URL %s: requests go over HTTPS only, use https:// (http:// is allowed only for localhost)", raw)
+			return "", fmt.Errorf("server URL %s: requests go over HTTPS only, use https:// (http:// is allowed only for localhost)", shown)
 		}
 	default:
-		return "", fmt.Errorf("server URL %s: the scheme must be https:// (http:// only for localhost)", raw)
+		return "", fmt.Errorf("server URL %s: the scheme must be https:// (http:// only for localhost)", shown)
 	}
 	path := strings.TrimRight(u.EscapedPath(), "/")
 	for _, api := range []string{"/api/v1", "/api"} {
 		if strings.HasSuffix(path, api) {
-			return "", fmt.Errorf("server URL %s ends in %s: give the server's root URL (the client adds /api/v1)", raw, api)
+			return "", fmt.Errorf("server URL %s ends in %s: give the server's root URL (the client adds /api/v1)", shown, api)
 		}
 	}
 
@@ -86,26 +87,28 @@ func loopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// redact returns raw with any user name and password removed, for error
-// messages.
-func redact(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.User == nil {
-		// Without a scheme, "user:pass@host" doesn't parse as userinfo:
-		// drop everything up to the last "@" before the first "/".
-		rest := raw
-		if i := strings.Index(rest, "://"); i >= 0 {
-			rest = rest[i+3:]
-		}
-		end := strings.IndexAny(rest, "/?#")
-		if end < 0 {
-			end = len(rest)
-		}
-		if at := strings.LastIndex(rest[:end], "@"); at >= 0 {
-			return strings.Replace(raw, rest[:at+1], "", 1)
-		}
-		return raw
+// display returns raw for an error message: without a user name or
+// password, and cut at the first "?" or "#", since any of those may hold
+// a secret.
+func display(raw string) string {
+	s, cut := raw, false
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
+		s, cut = s[:i], true
 	}
-	u.User = nil
-	return u.String()
+	prefix, rest := "", s
+	if i := strings.Index(s, "://"); i >= 0 {
+		prefix, rest = s[:i+3], s[i+3:]
+	}
+	end := strings.Index(rest, "/")
+	if end < 0 {
+		end = len(rest)
+	}
+	if at := strings.LastIndex(rest[:end], "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	s = prefix + rest
+	if cut {
+		s += "…"
+	}
+	return s
 }

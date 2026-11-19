@@ -151,6 +151,24 @@ func TestStoreServerChange(t *testing.T) {
 	}
 }
 
+// Deleting an account never drops another server's token kept for the
+// same profile.
+func TestStoreDeleteOnlyItsServer(t *testing.T) {
+	for name, s := range stores(t) {
+		if err := s.Set(acct, token); err != nil {
+			t.Fatal(err)
+		}
+		old := Account{Profile: acct.Profile, Server: "https://old.example.org"}
+		if err := s.Delete(old); err != nil {
+			t.Errorf("%s: Delete for the profile's old server = %v", name, err)
+		}
+		if got, err := s.Get(acct); err != nil || got != token {
+			t.Errorf("%s: Delete for another server dropped this one's token: %q, %v", name, got, err)
+		}
+		_ = s.Delete(acct)
+	}
+}
+
 func TestStoreRefusesBadInput(t *testing.T) {
 	for name, s := range stores(t) {
 		for _, bad := range []string{"", "two words", "line\nbreak", "tab\there", "nul\x00", strings.Repeat("a", 5000), "ünïcode"} {

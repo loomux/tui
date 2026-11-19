@@ -128,12 +128,23 @@ func (s *FileStore) Set(a Account, tok string) error {
 	return nil
 }
 
-// Delete removes the profile's token file, whichever server it was for.
+// Delete removes the profile's token file, unless it holds another
+// server's token: that is another account's. An unreadable or corrupt
+// file is no one's token and is removed.
 func (s *FileStore) Delete(a Account) error {
 	if err := a.check(); err != nil {
 		return fmt.Errorf("token file: %w", err)
 	}
-	err := os.Remove(s.path(a))
+	p := s.path(a)
+	if f, err := openNoFollow(p); err == nil {
+		var tf tokenFile
+		b, rerr := io.ReadAll(io.LimitReader(f, 2*maxToken))
+		f.Close()
+		if rerr == nil && json.Unmarshal(b, &tf) == nil && tf.Server != "" && tf.Server != a.Server {
+			return nil
+		}
+	}
+	err := os.Remove(p)
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}

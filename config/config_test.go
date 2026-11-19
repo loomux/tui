@@ -117,7 +117,12 @@ func TestParseErrors(t *testing.T) {
 		{"unknown section", "[colours]\nheader = \"red\"\n", `unknown key "colours`},
 		{"a token in the config", "[profiles.test]\nserver = \"https://example.net\"\ntoken = \"tok-secret\"\n", "never holds a token"},
 		{"a top-level token", `token = "tok-secret"`, "never holds a token"},
-		{"bad token_store", `token_store = "plain"`, `token_store "plain"`},
+		{"bad token_store", `token_store = "plain"`, `token_store: use "keyring"`},
+		// A value that may be a token pasted in the wrong place isn't
+		// repeated.
+		{"a token as token_store", `token_store = "tok-secret"`, `token_store: use "keyring"`},
+		{"a secret in a server query", "[profiles.test]\nserver = \"https://example.net/?t=tok-secret\"\n", "profiles.test"},
+		{"a secret in LOOMUX-style userinfo", "[profiles.test]\nserver = \"https://u:tok-secret@example.net\"\n", "profiles.test"},
 		{"http server", "[profiles.test]\nserver = \"http://loomux.example.net\"\n", `profiles.test: server`},
 		{"scheme-less server", "[profiles.test]\nserver = \"loomux.example.net\"\n", `https://loomux.example.net`},
 		{"no server", "[profiles.test]\nwarn = true\n", `profiles.test: no server`},

@@ -178,7 +178,8 @@ func (c *Config) check() error {
 		c.TokenStore = TokenStoreKeyring
 	case TokenStoreKeyring, TokenStoreFile:
 	default:
-		return fmt.Errorf("token_store %q: use %q (the default) or %q", c.TokenStore, TokenStoreKeyring, TokenStoreFile)
+		// The value isn't repeated: it may be a token in the wrong place.
+		return fmt.Errorf("token_store: use %q (the default) or %q", TokenStoreKeyring, TokenStoreFile)
 	}
 	if c.Attach.Mode == "" {
 		c.Attach.Mode = "auto"
