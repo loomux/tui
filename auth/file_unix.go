@@ -10,9 +10,11 @@ import (
 )
 
 // openNoFollow opens path for reading, failing on a symlink rather than
-// reading what it points at.
+// reading what it points at. O_NONBLOCK keeps a named pipe from blocking
+// the open until a writer appears (the caller's file-type check then
+// refuses it); it changes nothing for a regular file.
 func openNoFollow(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
 
 // isSymlinkErr reports whether openNoFollow failed because the path is a

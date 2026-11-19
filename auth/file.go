@@ -131,6 +131,11 @@ func (s *FileStore) Set(a Account, tok string) error {
 // Delete removes the profile's token file, unless it holds another
 // server's token: that is another account's. An unreadable or corrupt
 // file is no one's token and is removed.
+//
+// Set and Delete aren't coordinated across processes: a Set for the same
+// profile on another server landing between Delete's check and its
+// remove would be lost. T2 (login, logout, 401 handling) brings the
+// concurrent callers, and with them a lock if one is needed.
 func (s *FileStore) Delete(a Account) error {
 	if err := a.check(); err != nil {
 		return fmt.Errorf("token file: %w", err)

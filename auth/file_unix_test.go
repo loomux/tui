@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestFileStoreModes(t *testing.T) {
@@ -144,5 +145,42 @@ func TestFileStoreRefusesSymlinks(t *testing.T) {
 	ls := NewFileStore(link)
 	if err := ls.Set(acct, token); !errors.Is(err, ErrInsecure) {
 		t.Errorf("a symlinked directory: Set = %v, want ErrInsecure", err)
+	}
+}
+
+// A named pipe at the token path is refused or removed, never waited on:
+// opening one for reading blocks until a writer appears.
+func TestFileStoreFIFO(t *testing.T) {
+	s := NewFileStore(filepath.Join(t.TempDir(), "loomux"))
+	if err := s.Set(acct, token); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(s.path(acct)); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(s.path(acct), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 2)
+	go func() {
+		_, err := s.Get(acct)
+		done <- err
+		done <- s.Delete(acct)
+	}()
+	for _, op := range []string{"Get", "Delete"} {
+		select {
+		case err := <-done:
+			if op == "Get" && !errors.Is(err, ErrInsecure) {
+				t.Errorf("Get = %v, want ErrInsecure", err)
+			}
+			if op == "Delete" && err != nil {
+				t.Errorf("Delete = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s hangs on a named pipe", op)
+		}
+	}
+	if _, err := os.Lstat(s.path(acct)); !os.IsNotExist(err) {
+		t.Errorf("Delete left the named pipe: %v", err)
 	}
 }
