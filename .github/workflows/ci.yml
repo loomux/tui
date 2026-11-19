@@ -1,0 +1,108 @@
+# Checks for every pull request and every push to main (R2, LOOM-277;
+# the design in loomux/server, docs/design/tui-client-design.md,
+# "Repository" and "Releases and versioning"). The job names, test and
+# vulncheck, are the required status checks on main.
+#
+# Pull requests and main pushes don't run twice: a branch push runs
+# nothing until it has a pull request. A newer push to the same pull
+# request cancels its older run; main runs always finish.
+#
+# Actions are pinned by commit, with the release in a comment.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # The toolchain is the one go.mod names, which setup-go installs: never
+  # a newer one downloaded on the fly.
+  GOTOOLCHAIN: local
+  # go.mod alone, never a go.work (the "go.work isn't committed" step
+  # below refuses one).
+  GOWORK: "off"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: go.work isn't committed
+        run: |
+          if [ -n "$(git ls-files go.work go.work.sum)" ]; then
+            echo "::error::go.work is committed: it stays local (go.mod pins the server at a release tag)"
+            exit 1
+          fi
+
+      - name: gofmt
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "::error::not gofmt'd:"; echo "$files"; exit 1
+          fi
+
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+
+      # The constant `loomux version` prints matches go.mod
+      # (TestServerPinMatchesGoMod checks the same from go test).
+      - name: serverpin.go is generated from go.mod
+        run: |
+          go generate ./...
+          git diff --exit-code -- internal/version/serverpin.go
+
+      - run: go vet ./...
+
+      - run: go build ./...
+
+      # Only _test.go files import the server: none of it is linked into
+      # a binary.
+      - name: The server isn't linked in
+        run: |
+          linked="$(go list -deps ./... | grep -E '^github\.com/Loomux/server(/|$)' || true)"
+          if [ -n "$linked" ]; then
+            echo "::error::non-test code imports the server:"; echo "$linked"; exit 1
+          fi
+
+      # Also: the server pin is a release tag with no replace directive
+      # (TestGoModPinIsATag), the pin constant matches go.mod
+      # (TestServerPinMatchesGoMod), and every client/testdata/uses.txt
+      # line is in the pinned server's API contract
+      # (TestUsesAreInServerContract). -shuffle=on surfaces tests that
+      # depend on order; the seed is in the log.
+      - run: go test -race -shuffle=on ./...
+
+      # Changelog fragments (changes/*.md) are well-formed.
+      - name: changelog
+        run: sh deploy/changelog.sh check
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # On the toolchain go.mod pins, so a standard library vulnerability
+      # fixed in a later Go release fails here until go.mod moves to it.
+      # Fails on a vulnerability the code can reach; one only in a module
+      # it requires but never calls is reported, not failed.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
