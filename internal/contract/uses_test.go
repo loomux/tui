@@ -5,8 +5,6 @@
 package contract
 
 import (
-	"bufio"
-	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -81,9 +79,8 @@ func missing(contract, uses []byte) []string {
 // every line but blank ones and "#" comments, trailing space trimmed.
 func lines(b []byte) []string {
 	var out []string
-	s := bufio.NewScanner(bytes.NewReader(b))
-	for s.Scan() {
-		l := strings.TrimRight(s.Text(), " \t\r")
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimRight(l, " \t\r")
 		if l == "" || strings.HasPrefix(l, "#") {
 			continue
 		}
@@ -114,6 +111,10 @@ GET /api/v1/version status 200
 		{"a prefix of a line isn't a line", "GET /api/v1/version response\n",
 			[]string{"GET /api/v1/version response"}},
 		{"the contract's comments aren't lines", "API v1 contract\n", []string{"API v1 contract"}},
+		// No line-length limit stops the reading early: a bufio.Scanner
+		// would stop at a 64 KiB line and lose the ones after it.
+		{"a long line doesn't end the file", "# " + strings.Repeat("x", 100_000) + "\nGET /api/v1/nope status 200\n",
+			[]string{"GET /api/v1/nope status 200"}},
 	} {
 		got := missing(contract, []byte(tc.uses))
 		if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
