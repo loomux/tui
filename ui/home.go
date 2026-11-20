@@ -104,11 +104,13 @@ const (
 // more than the list asked for.
 func (h *home) lines() []line {
 	var out []line
+	query := strings.TrimSpace(h.query)
+	noMatch := fmt.Sprintf("no conversation matches %q", clean(query))
 	switch {
 	case len(h.items) == 0:
 		out = append(out, line{kind: noteLine, text: "no conversations yet"})
-	case len(h.visible) == 0 && strings.TrimSpace(h.query) != "":
-		out = append(out, line{kind: noteLine, text: fmt.Sprintf("no conversation matches %q", clean(strings.TrimSpace(h.query)))})
+	case len(h.visible) == 0 && query != "" && h.view == allView:
+		out = append(out, line{kind: noteLine, text: noMatch})
 	default:
 		for _, g := range []group{needsYou, running, done} {
 			if !h.view.shows(g) {
@@ -124,7 +126,11 @@ func (h *home) lines() []line {
 				continue
 			}
 			out = append(out, line{kind: titleLine, group: g, count: len(rows)})
-			if len(rows) == 0 {
+			switch {
+			case len(rows) > 0:
+			case query != "":
+				out = append(out, line{kind: noteLine, text: noMatch})
+			default:
 				out = append(out, line{kind: noteLine, text: emptyGroup[g]})
 			}
 			out = append(out, rows...)

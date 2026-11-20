@@ -845,3 +845,16 @@ func golden(t *testing.T, name, got string) {
 		t.Errorf("%s differs (go test ./ui -update rewrites it):\n--- got\n%s\n--- want\n%s", path, got, want)
 	}
 }
+
+// In one group's view, a filter that matches nothing there still names
+// the group.
+func TestFilterNoMatchInAGroup(t *testing.T) {
+	h := loaded(t, 80, 24)
+	h.key("tab", "tab") // running
+	h.key("/")
+	h.typed("kubectl")
+	f := h.frame()
+	if !strings.Contains(f, "RUNNING (0)") || !strings.Contains(f, `no conversation matches "kubectl"`) {
+		t.Errorf("running, filtered on kubectl:\n%s", f)
+	}
+}
