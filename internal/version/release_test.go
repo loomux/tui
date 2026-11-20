@@ -209,6 +209,69 @@ esac
 	}
 }
 
+// Two people reserving the same commit at once give it one version: the
+// one that loses the race finds the commit tagged and prints that,
+// rather than tag it again with the next number.
+func TestReleaseReserveSameCommitRace(t *testing.T) {
+	r := newRepo(t)
+	r.git("commit", "-q", "--allow-empty", "-m", "base")
+	r.git("tag", "v0.1.0")
+	r.git("commit", "-q", "--allow-empty", "-m", "merge")
+	sha := r.git("rev-parse", "HEAD")
+	created := filepath.Join(t.TempDir(), "created")
+	gh := `#!/bin/sh
+case "$*" in
+*refs/tags/v0.1.1*) git -C "` + r.dir + `" tag v0.1.1 ` + sha + `; echo 'gh: Reference already exists (HTTP 422)' >&2; exit 1 ;;
+*) echo "$*" >> "` + created + `"; exit 0 ;;
+esac
+`
+	if got, ok := r.run(gh, reserveEnv, "reserve", sha, "patch"); !ok || got != "0.1.1" {
+		t.Errorf("reserve = %q, %v; want 0.1.1, the version the other reserve gave it", got, ok)
+	}
+	if b, _ := os.ReadFile(created); len(b) > 0 {
+		t.Errorf("reserve created another tag: %q", b)
+	}
+}
+
+// A reserve that can't fetch stops: main and the tags it would go by may
+// be stale.
+func TestReleaseReserveFetchFails(t *testing.T) {
+	r := newRepo(t)
+	r.git("commit", "-q", "--allow-empty", "-m", "base")
+	r.git("tag", "v0.1.0")
+	r.git("commit", "-q", "--allow-empty", "-m", "merge")
+	r.git("remote", "add", "origin", filepath.Join(t.TempDir(), "gone"))
+	got, ok := r.run("#!/bin/sh\necho called >&2; exit 1\n", reserveEnv, "reserve", "main", "patch")
+	if ok || !strings.Contains(got, "fetch") || strings.Contains(got, "called") {
+		t.Errorf("reserve with a failing fetch = %q, %v", got, ok)
+	}
+}
+
+// A patch's notes: main's first-parent commits since the previous release,
+// newest first, so a patch that covers several merged pull requests lists
+// each of them.
+func TestReleaseLog(t *testing.T) {
+	r := newRepo(t)
+	r.git("commit", "-q", "--allow-empty", "-m", "First (#1)")
+	if got, ok := r.run("", nil, "log", "main"); !ok || got != "- First (#1)" {
+		t.Errorf("log with no release before = %q, %v", got, ok)
+	}
+	r.git("tag", "v0.1.0")
+	r.git("commit", "-q", "--allow-empty", "-m", "A (#2)")
+	r.git("tag", "v0.2.0-rc.1") // not a release the line goes by
+	r.git("checkout", "-q", "-b", "side")
+	r.git("commit", "-q", "--allow-empty", "-m", "side work")
+	r.git("checkout", "-q", "main")
+	r.git("-c", "core.editor=true", "merge", "-q", "--no-ff", "-m", "B (#3)", "side")
+	r.git("tag", "v0.1.1")
+	if got, ok := r.run("", nil, "log", "v0.1.1"); !ok || got != "- B (#3)\n- A (#2)" {
+		t.Errorf("log v0.1.1 = %q, %v", got, ok)
+	}
+	if _, ok := r.run("", nil, "log", "nope"); ok {
+		t.Error("log of an unknown commit succeeded")
+	}
+}
+
 // When a newer merge was released first, the older merge (an ancestor of
 // it) releases nothing rather than take a higher version than its
 // successor.

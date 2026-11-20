@@ -33,12 +33,14 @@ A **patch** releases what's merged on `main`:
 GITHUB_REPOSITORY=loomux/tui deploy/release.sh reserve origin/main patch
 ```
 
-`reserve` takes the highest `vX.Y.Z` tag plus one and creates that tag
-on the commit through the GitHub API, with your `gh` credentials. It
-prints the version, and the new tag starts the release workflow. It
-refuses a commit that isn't on `main`. Asked again for a commit that
-already has a version, it prints that version and creates nothing. When
-two reserves race, the second takes the next number.
+`reserve` fetches `origin` first and stops if that fails. It takes the
+highest `vX.Y.Z` tag plus one and creates that tag on the commit
+through the GitHub API, with your `gh` credentials. It prints the
+version, and the new tag starts the release workflow. It refuses a
+commit that isn't on `main`. Asked again for a commit that already has a
+version, it prints that version and creates nothing. When two reserves
+race for different commits, the second takes the next number; when they
+race for the same commit, both print the one version it gets.
 
 A **milestone** is each MINOR (0.2.0, 0.3.0…), the first version
 (0.1.0), and later an `-rc` or 1.0.0:
@@ -61,8 +63,9 @@ A **milestone** is each MINOR (0.2.0, 0.3.0…), the first version
    the one for the runner reports the version, and writes `SHA256SUMS`.
    It ends by attesting each binary.
 3. **release:** the files are checked against `SHA256SUMS`. The notes
-   are the milestone's `CHANGELOG.md` section, or for a patch the pull
-   request merged as the tagged commit, plus the server pin. The
+   are the milestone's `CHANGELOG.md` section, plus the server pin. For
+   a patch they are the commits merged to `main` since the previous
+   release instead (`deploy/release.sh log`), one pull request each. The
    release is created as a draft with every file and then published. A
    re-run after a failure replaces a draft left behind and leaves a
    published release alone.

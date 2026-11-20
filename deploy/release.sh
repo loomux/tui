@@ -16,6 +16,8 @@
 #                                              GitHub API and print the version
 #                                              (or the one it already has;
 #                                              nothing before the first release)
+#   deploy/release.sh log <commit>             a patch's notes: main's commits
+#                                              since the previous release
 #   deploy/release.sh check <tag>              the release workflow's gate: print
 #                                              the version of a tag on main, and
 #                                              refuse a milestone (X.Y.0, -pre)
@@ -40,6 +42,12 @@ die() { echo "release: $*" >&2; exit 1; }
 # on_branch <sha>: the commit is on the release branch.
 on_branch() {
   git merge-base --is-ancestor "$1" "$branch" 2>/dev/null
+}
+
+# tagged <sha>: the X.Y.Z version the commit already has, if any.
+tagged() {
+  git tag --points-at "$1" --list 'v*' |
+    sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | head -n 1
 }
 
 case "${1:-}" in
@@ -97,19 +105,26 @@ reserve)
   # signed in with the right to create tags, and GITHUB_REPOSITORY
   # (owner/name).
   kind="${3:-patch}"
-  git fetch -q --tags --force origin 2>/dev/null || true
+  # The tags and origin/main (a fetch with --tags fetches both). Stale,
+  # they could tag an old commit or a taken number, so a failed fetch
+  # stops here.
+  if git remote get-url origin >/dev/null 2>&1; then
+    git fetch -q --tags --force origin || die "reserve: can't fetch origin, so main and the tags may be stale"
+  fi
   sha="$(git rev-parse --verify --quiet "${2:-}^{commit}")" || die "reserve: no commit '${2:-}'"
   # A tag can't be moved or deleted, so a commit off main would burn its
   # number for a release the workflow refuses.
   on_branch "$sha" || die "reserve: $sha is not on ${branch#origin/}"
-  existing="$(git tag --points-at "$sha" --list 'v*' |
-    sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | head -n 1)"
+  existing="$(tagged "$sha")"
   if [ -n "$existing" ]; then echo "$existing"; exit 0; fi
   [ -n "${GITHUB_REPOSITORY:-}" ] || die "reserve: set GITHUB_REPOSITORY (loomux/tui)"
   err="$(mktemp)"
   trap 'rm -f "$err"' EXIT
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     git fetch -q --tags --force origin 2>/dev/null || true
+    # Someone else reserving the same commit may have won the race.
+    existing="$(tagged "$sha")"
+    if [ -n "$existing" ]; then echo "$existing"; exit 0; fi
     latest="$("$0" latest --all)"
     if [ -z "$latest" ]; then
       [ "$kind" != minor ] || die "reserve: no release line yet; cut the first version by hand"
@@ -133,6 +148,16 @@ reserve)
   done
   die "reserve: gave up after 10 tries"
   ;;
+log)
+  # Main's first-parent commits since the previous release (the highest
+  # X.Y.Z tag before the commit), newest first, as "- subject": a squash
+  # merge's subject ends in its pull request's "(#N)".
+  sha="$(git rev-parse --verify --quiet "${2:-}^{commit}")" || die "log: no commit '${2:-}'"
+  prev=""
+  if git rev-parse --verify --quiet "$sha^" >/dev/null; then prev="$("$0" latest "$sha^")"; fi
+  if [ -n "$prev" ]; then range="v$prev..$sha"; else range="$sha"; fi
+  git log --first-parent --format='- %s' "$range"
+  ;;
 check)
   tag="${2:-}"
   v="$("$0" version "$tag")" || exit 1
@@ -152,6 +177,6 @@ check)
   echo "$v"
   ;;
 *)
-  die "usage: $0 version <tag> | prerelease <version> | notes <version> [file] | latest [rev|--all] | next <patch|minor> <version> | reserve <commit> <patch|minor> | check <tag>"
+  die "usage: $0 version <tag> | prerelease <version> | notes <version> [file] | latest [rev|--all] | next <patch|minor> <version> | reserve <commit> <patch|minor> | log <commit> | check <tag>"
   ;;
 esac
