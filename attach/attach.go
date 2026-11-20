@@ -200,8 +200,9 @@ type Terminal struct {
 	In       io.Reader
 	Out, Err io.Writer
 	// Offer asks the person whether to try next after failed failed fast.
-	// It is called with the hold still held. Without one, the next
-	// command is tried.
+	// It is called with the hold still held, and must return when its
+	// context ends (Ask does): the question is moot then. Without one,
+	// the next command is tried.
 	Offer func(ctx context.Context, failed Attempt, next Command) bool
 }
 
@@ -438,8 +439,13 @@ func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Co
 	if t.Offer == nil {
 		return true
 	}
+	// The question's own context ends when the question is moot, and the
+	// question is waited for: nothing is left reading the terminal when
+	// Run returns.
+	asking, moot := context.WithCancel(ctx)
+	defer moot()
 	answer := make(chan bool, 1)
-	go func() { answer <- t.Offer(ctx, failed, next) }()
+	go func() { answer <- t.Offer(asking, failed, next) }()
 	select {
 	case yes := <-answer:
 		return yes && ctx.Err() == nil && s.beat.goneErr() == nil && !s.isOver()
@@ -447,6 +453,8 @@ func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Co
 	case <-s.beat.gone:
 	case <-s.over:
 	}
+	moot()
+	<-answer
 	return false
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/Loomux/tui/client"
@@ -11,45 +12,24 @@ import (
 
 // Ask puts a yes/no question and reads one line of answer: y or yes,
 // n or no, or nothing for def. Anything else is a no, and so is no
-// answer at all: the input is gone, or ctx was cancelled (a signal)
-// while the question stood. It reads its line and nothing after it: the
-// rest is the next command's.
+// answer at all: the input is gone, or ctx was cancelled (a signal, or a
+// question no longer worth asking) while it stood. It reads its line and
+// nothing after it: the rest is the next command's.
+//
+// Once ctx has ended, Ask no longer reads a terminal (or any file on
+// Unix): the screens that resume after it get every key.
 func Ask(ctx context.Context, in io.Reader, out io.Writer, question string, def bool) bool {
 	hint := " [y/N] "
 	if def {
 		hint = " [Y/n] "
 	}
 	fmt.Fprint(out, question+hint)
-	// A read of a terminal can't be interrupted, so it gets a goroutine
-	// of its own, left behind if ctx ends first: the client is then on
-	// its way out.
-	answer := make(chan bool, 1)
-	go func() { answer <- readAnswer(in, def) }()
-	select {
-	case yes := <-answer:
-		return yes
-	case <-ctx.Done():
-		fmt.Fprintln(out)
+	line, ok := readLine(ctx, in)
+	if !ok {
+		if ctx.Err() != nil {
+			fmt.Fprintln(out) // what comes next starts on its own line
+		}
 		return false
-	}
-}
-
-func readAnswer(in io.Reader, def bool) bool {
-	var line []byte
-	for b := make([]byte, 1); ; {
-		n, err := in.Read(b)
-		if n == 1 {
-			if b[0] == '\n' {
-				break
-			}
-			line = append(line, b[0])
-		}
-		if len(line) > 256 || (err != nil && len(line) == 0) {
-			return false
-		}
-		if err != nil {
-			break
-		}
 	}
 	switch strings.ToLower(strings.TrimSpace(string(line))) {
 	case "":
@@ -58,6 +38,58 @@ func readAnswer(in io.Reader, def bool) bool {
 		return true
 	}
 	return false
+}
+
+// maxAnswer bounds a line of answer.
+const maxAnswer = 256
+
+// readLine reads a line of in, without its line break. It reports false
+// for no answer: the input ended with nothing on the line, the line is
+// too long, or ctx ended first.
+func readLine(ctx context.Context, in io.Reader) ([]byte, bool) {
+	if f, isFile := in.(*os.File); isFile {
+		if line, ok, polled := pollLine(ctx, f); polled {
+			return line, ok
+		}
+	}
+	// A read that can't be interrupted gets a goroutine of its own, left
+	// behind if ctx ends first.
+	type answer struct {
+		line []byte
+		ok   bool
+	}
+	got := make(chan answer, 1)
+	go func() {
+		line, ok := scanLine(func(b []byte) (int, error) { return in.Read(b) })
+		got <- answer{line, ok}
+	}()
+	select {
+	case a := <-got:
+		return a.line, a.ok
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+// scanLine reads a line a byte at a time, so that nothing after it is
+// taken from the input.
+func scanLine(read func([]byte) (int, error)) ([]byte, bool) {
+	var line []byte
+	for b := make([]byte, 1); ; {
+		n, err := read(b)
+		if n == 1 {
+			if b[0] == '\n' {
+				return line, true
+			}
+			line = append(line, b[0])
+		}
+		if len(line) > maxAnswer || (err != nil && len(line) == 0) {
+			return nil, false
+		}
+		if err != nil {
+			return line, true
+		}
+	}
 }
 
 // HeldLine names who holds a task.
