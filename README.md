@@ -148,6 +148,7 @@ in effect on the current screen.
 | `attach` | `a` | list, conversation | attach to the agent |
 | `watch` | `w` | list, conversation | watch the agent (read-only) |
 | `browser` | `o` | list, conversation | open in the browser |
+| `take_back` | `T` | list, conversation | take it back from the terminal driving it |
 | `transcript` | `p` | conversation | show the task's transcript |
 | `cancel` | `x` `ctrl+c` | conversation, composer | cancel the turn in flight |
 | `yes` | `y` | conversation | answer yes |

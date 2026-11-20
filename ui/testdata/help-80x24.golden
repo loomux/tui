@@ -14,11 +14,11 @@
    a              attach to the agent
    w              watch the agent (read-only)
    o              open in the browser
+   T              take it back from the terminal driving it
    ?              help
    q              quit
 
  While typing a filter (/)
    esc    back
    enter  keep the filter
-
  esc back  q quit
