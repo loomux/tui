@@ -1,0 +1,24 @@
+ loomux · test · cc-hub                                         ● live   ?=help
+ Keys in a conversation
+   k/up           move up
+   j/down         move down
+   pgup/ctrl+u    page up
+   pgdown/ctrl+d  page down
+   g/home         go to the top
+   G/end          go to the bottom
+   esc            back
+   a              attach to the agent
+   w              watch the agent (read-only)
+   o              open in the browser
+   p              show the task's transcript
+   x/ctrl+c       cancel the turn in flight
+   y              answer yes
+   n              answer no
+   1-9            choose an option by its number
+   r              reply with text
+   ?              help
+   q              quit
+
+
+
+ esc back  q quit
