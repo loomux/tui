@@ -237,6 +237,9 @@ func TestCanonical(t *testing.T) {
 		"f5":          "f5",
 		"F12":         "f12",
 		"ctrl+alt+up": "ctrl+alt+up",
+		// Bubble Tea writes alt with the space bar as "alt+ ".
+		"alt+ ":     "alt+space",
+		"alt+space": "alt+space",
 		// A terminal sends these as tab, enter and esc.
 		"ctrl+i":     "tab",
 		"ctrl+I":     "tab",
@@ -250,7 +253,7 @@ func TestCanonical(t *testing.T) {
 			t.Errorf("Canonical(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"", "ctrl+", "ctrl", "foo", "ab", "ctrl+ctrl+a", "shift+a", "shift+1", " a", "a ", "f0", "f21", "\t", "\x00", "hyper+a"} {
+	for _, bad := range []string{"", "ctrl+", "ctrl", "foo", "ab", "ctrl+ctrl+a", "shift+a", "shift+1", " a", "a ", "alt+ a", "alt+a ", "f0", "f21", "\t", "\x00", "hyper+a"} {
 		if got, err := Canonical(bad); err == nil {
 			t.Errorf("Canonical(%q) = %q, want an error", bad, got)
 		}
@@ -266,6 +269,17 @@ func TestAliasClash(t *testing.T) {
 	m := Default()
 	if a, _, ok := m.Lookup(ListScreen, "ctrl+i"); !ok || a != NextGroup {
 		t.Errorf(`"ctrl+i" on the list = %q, %v; want next_group (tab)`, a, ok)
+	}
+}
+
+// A binding to alt+space fires on the key Bubble Tea reports for it.
+func TestLookupAltSpace(t *testing.T) {
+	m, err := New(map[string][]string{"filter": {"alt+space"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, _, ok := m.Lookup(ListScreen, "alt+ "); !ok || a != Filter {
+		t.Errorf(`"alt+ " on the list = %q, %v; want filter`, a, ok)
 	}
 }
 

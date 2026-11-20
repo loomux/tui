@@ -387,16 +387,13 @@ var ctrlAliases = map[string]string{"i": "tab", "m": "enter", "[": "esc"}
 // character as itself, except under ctrl, where a letter is lower case
 // (terminals can't tell ctrl+s from ctrl+S) and ctrl+i, ctrl+m and
 // ctrl+[ are tab, enter and esc (a terminal sends them as those). " " is
-// space.
+// space, alone or after modifiers ("alt+ ", as Bubble Tea writes it).
 func Canonical(key string) (string, error) {
 	if key == " " {
 		return "space", nil
 	}
 	if key == "" {
 		return "", errors.New("no key")
-	}
-	if strings.ContainsFunc(key, unicode.IsSpace) {
-		return "", fmt.Errorf("%q: a key has no spaces (write the space bar as space)", key)
 	}
 	has := map[string]bool{}
 	rest := key
@@ -417,6 +414,13 @@ func Canonical(key string) (string, error) {
 		if !found {
 			break
 		}
+	}
+	// Bubble Tea writes the space bar after a modifier as " " ("alt+ ").
+	if rest == " " {
+		rest = "space"
+	}
+	if strings.ContainsFunc(rest, unicode.IsSpace) {
+		return "", fmt.Errorf("%q: a key has no spaces (write the space bar as space)", key)
 	}
 	var base string
 	if n, ok := named[strings.ToLower(rest)]; ok {
