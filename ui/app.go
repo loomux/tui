@@ -1,7 +1,9 @@
 // Package ui is the terminal client's Bubble Tea screens (the design in
 // loomux/server, docs/design/tui-client-design.md, "Main workflows"). So
 // far it has the home screen: the attention-first list of conversations,
-// with its filter and its ? help.
+// with its filter and its ? help, and the handoff between clients: o
+// opens a conversation on the web, T takes one back from the terminal
+// driving it, and Options.Open starts on one (loomux open).
 //
 // The list polls GET /conversations?limit=100 every 5 s, counted from the
 // last answer, and at once on Refresh (the design: "right after any
@@ -21,12 +23,16 @@ import (
 
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
+	"github.com/Loomux/tui/internal/browser"
 )
 
 // API is what the list asks the server. A *client.Client is one.
 type API interface {
 	Conversations(ctx context.Context, limit int) (*client.ConversationPage, error)
 	Workspaces(ctx context.Context) ([]client.Workspace, error)
+	// Conversation and Release take a conversation back.
+	Conversation(ctx context.Context, id string, page client.Page) (*client.Conversation, error)
+	Release(ctx context.Context, taskID, holdID string) (*client.Release, error)
 }
 
 // Options configure the screens.
@@ -36,6 +42,13 @@ type Options struct {
 	Keys    *keymap.Map // the effective keymap (config.Config.Keymap)
 	// Now is the clock rows' ages are counted on: time.Now when nil.
 	Now func() time.Time
+	// Server is the profile's server URL: o opens a conversation at
+	// <Server>/conversations/<id>, the web's page for it.
+	Server string
+	// Browse opens a link in the browser: browser.Open when nil.
+	Browse func(link string) error
+	// Open is a conversation to go to once the list is in (loomux open).
+	Open string
 }
 
 const (
@@ -50,10 +63,12 @@ const (
 
 // App is the root model: the list, its filter's input and its help.
 type App struct {
-	profile string
-	api     API
-	keys    *keymap.Map
-	now     func() time.Time
+	profile  string
+	api      API
+	keys     *keymap.Map
+	now      func() time.Time
+	server   string
+	browseFn func(string) error
 	// tick is tea.Tick; tests replace it.
 	tick func(time.Duration, func(time.Time) tea.Msg) tea.Cmd
 
@@ -64,6 +79,8 @@ type App struct {
 	helpOffset    int
 	notice        string // a line in the footer's place until the next key
 	quitting      bool
+	opening       string // the conversation to go to once the list is in
+	takingBack    bool   // a take back is in flight
 
 	poller
 }
@@ -78,18 +95,25 @@ func New(o Options) *App {
 	if keys == nil {
 		keys = keymap.Default()
 	}
+	browse := o.Browse
+	if browse == nil {
+		browse = browser.Open
+	}
 	in := textinput.New()
 	in.Prompt = "/"
 	in.SetVirtualCursor(false) // the terminal's own cursor, placed by View
 	return &App{
-		profile: o.Profile,
-		api:     o.API,
-		keys:    keys,
-		now:     now,
-		tick:    tea.Tick,
-		screen:  keymap.ListScreen,
-		filter:  in,
-		poller:  poller{names: map[string]string{}},
+		profile:  o.Profile,
+		api:      o.API,
+		keys:     keys,
+		now:      now,
+		server:   o.Server,
+		browseFn: browse,
+		opening:  o.Open,
+		tick:     tea.Tick,
+		screen:   keymap.ListScreen,
+		filter:   in,
+		poller:   poller{names: map[string]string{}},
 	}
 }
 
@@ -109,6 +133,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd = a.gotPage(msg)
 	case namesMsg:
 		a.gotNames(msg)
+	case browsedMsg:
+		a.gotBrowsed(msg)
+	case takeBackMsg:
+		cmd = a.gotTakeBack(msg)
 	case pollMsg:
 		if msg.gen == a.gen && !a.signedOut {
 			cmd = a.poll()
@@ -138,11 +166,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // notYet names the list's actions that later tickets add.
 var notYet = map[keymap.Action]string{
-	keymap.Open:            "opening a conversation",
 	keymap.NewConversation: "starting a conversation",
 	keymap.Attach:          "attaching",
 	keymap.Watch:           "watching",
-	keymap.Browser:         "opening it in the browser",
 }
 
 func (a *App) listKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -176,6 +202,14 @@ func (a *App) listKey(msg tea.KeyPressMsg) tea.Cmd {
 	case keymap.Help:
 		a.screen = keymap.HelpScreen
 		a.helpOffset = 0
+	case keymap.Open:
+		if _, ok := a.home.current(); ok {
+			return a.openConversation()
+		}
+	case keymap.Browser:
+		return a.browse()
+	case keymap.TakeBack:
+		return a.takeBack()
 	case keymap.Quit:
 		a.quitting = true
 		return tea.Quit
