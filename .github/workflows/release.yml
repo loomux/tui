@@ -181,6 +181,7 @@ jobs:
           if ! deploy/release.sh notes "${VERSION}" > notes.md 2>/dev/null; then
             deploy/release.sh log "${GITHUB_SHA}" > notes.md
           fi
+          # shellcheck disable=SC2016 # Markdown's backticks, printed as they are
           {
             printf '\nServer pin: `%s`.\n\n' "$(sed -n 's/^const ServerPin = "\(.*\)"$/\1/p' internal/version/serverpin.go)"
             printf 'Check a download: `sha256sum -c --ignore-missing SHA256SUMS` and\n'
