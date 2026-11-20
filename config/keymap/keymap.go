@@ -41,11 +41,18 @@ const (
 	ComposerScreen     Screen = "composer"     // writing a message: keys that type text type it
 	TranscriptScreen   Screen = "transcript"   // a task's transcript
 	HelpScreen         Screen = "help"         // the ? help
+	FilterScreen       Screen = "filter"       // typing the list's filter: keys that type text type it
 )
 
 // Screens returns every screen, in a fixed order.
 func Screens() []Screen {
-	return []Screen{ListScreen, ConversationScreen, ComposerScreen, TranscriptScreen, HelpScreen}
+	return []Screen{ListScreen, ConversationScreen, ComposerScreen, TranscriptScreen, HelpScreen, FilterScreen}
+}
+
+// textInput reports whether a screen is a text input, where a key that
+// types text types it and never names an action.
+func textInput(s Screen) bool {
+	return s == ComposerScreen || s == FilterScreen
 }
 
 // An Action is what a key does, named as [keys] names it.
@@ -61,6 +68,7 @@ const (
 	Open            Action = "open"
 	Back            Action = "back"
 	Filter          Action = "filter"
+	Apply           Action = "apply"
 	NextGroup       Action = "next_group"
 	NewConversation Action = "new"
 	Attach          Action = "attach"
@@ -81,7 +89,7 @@ const (
 var (
 	browse   = []Screen{ListScreen, ConversationScreen, TranscriptScreen, HelpScreen}
 	onTask   = []Screen{ListScreen, ConversationScreen}
-	backable = []Screen{ListScreen, ConversationScreen, ComposerScreen, TranscriptScreen, HelpScreen}
+	backable = []Screen{ListScreen, ConversationScreen, ComposerScreen, TranscriptScreen, HelpScreen, FilterScreen}
 )
 
 type def struct {
@@ -102,6 +110,7 @@ var defs = []def{
 	{Open, []string{"enter"}, []Screen{ListScreen}, "open the conversation"},
 	{Back, []string{"esc"}, backable, "back"},
 	{Filter, []string{"/"}, []Screen{ListScreen}, "filter"},
+	{Apply, []string{"enter"}, []Screen{FilterScreen}, "keep the filter"},
 	{NextGroup, []string{"tab"}, []Screen{ListScreen}, "show needs you, running, done or all"},
 	{NewConversation, []string{"n"}, []Screen{ListScreen}, "new conversation"},
 	{Attach, []string{"a"}, onTask, "attach to the agent"},
@@ -171,10 +180,11 @@ func New(overrides map[string][]string) (*Map, error) {
 			problems = append(problems, fmt.Sprintf("keys.%s: %v", name, err))
 			continue
 		}
-		// In the composer a key that types text types it, so an action
-		// that works there needs another key too.
-		if slices.Contains(d.screens, ComposerScreen) && !slices.ContainsFunc(keys, func(k string) bool { return !typesText(k) }) {
-			problems = append(problems, fmt.Sprintf("keys.%s: %s types text in the composer, where %s works too; add a ctrl+ or alt+ key or a named key such as enter", name, quoted(keys), name))
+		// In a text input (the composer, the filter) a key that types
+		// text types it, so an action that works there needs another
+		// key too.
+		if i := slices.IndexFunc(d.screens, textInput); i >= 0 && !slices.ContainsFunc(keys, func(k string) bool { return !typesText(k) }) {
+			problems = append(problems, fmt.Sprintf("keys.%s: %s types text in the %s, where %s works too; add a ctrl+ or alt+ key or a named key such as enter", name, quoted(keys), d.screens[i], name))
 			continue
 		}
 		m.keys[a] = keys
@@ -187,7 +197,7 @@ func New(overrides map[string][]string) (*Map, error) {
 				continue
 			}
 			for _, k := range m.keys[d.action] {
-				if s == ComposerScreen && typesText(k) {
+				if textInput(s) && typesText(k) {
 					continue // it types the character
 				}
 				if prev, ok := bound[k]; ok {
@@ -272,8 +282,9 @@ func (m *Map) Keys(a Action) []string {
 
 // Lookup returns the action a key does on a screen, and the key's index
 // among the action's keys (for Choose, index i chooses option i+1). key
-// is a Bubble Tea KeyMsg.String(), or any spelling Canonical reads. In the
-// composer a key that types text never names an action.
+// is a Bubble Tea KeyMsg.String(), or any spelling Canonical reads. In a
+// text input (the composer, the filter) a key that types text never
+// names an action.
 func (m *Map) Lookup(s Screen, key string) (Action, int, bool) {
 	k, err := Canonical(key)
 	if err != nil {
