@@ -10,27 +10,27 @@ import (
 func TestDefaults(t *testing.T) {
 	m := Default()
 	want := map[Action][]string{
-		Up:         {"k", "up"},
-		Down:       {"j", "down"},
-		Top:        {"g", "home"},
-		Bottom:     {"G", "end"},
-		Filter:     {"/"},
-		Open:       {"enter"},
-		Back:       {"esc"},
-		New:        {"n"},
-		Attach:     {"a"},
-		Watch:      {"w"},
-		Yes:        {"y"},
-		No:         {"n"},
-		Cancel:     {"x", "ctrl+c"},
-		Browser:    {"o"},
-		Transcript: {"p"},
-		Help:       {"?"},
-		Send:       {"enter"},
-		Newline:    {"alt+enter"},
-		Choose:     {"1", "2", "3", "4", "5", "6", "7", "8", "9"},
-		Reply:      {"r"},
-		NextGroup:  {"tab"},
+		Up:              {"k", "up"},
+		Down:            {"j", "down"},
+		Top:             {"g", "home"},
+		Bottom:          {"G", "end"},
+		Filter:          {"/"},
+		Open:            {"enter"},
+		Back:            {"esc"},
+		NewConversation: {"n"},
+		Attach:          {"a"},
+		Watch:           {"w"},
+		Yes:             {"y"},
+		No:              {"n"},
+		Cancel:          {"x", "ctrl+c"},
+		Browser:         {"o"},
+		Transcript:      {"p"},
+		Help:            {"?"},
+		Send:            {"enter"},
+		Newline:         {"alt+enter"},
+		Choose:          {"1", "2", "3", "4", "5", "6", "7", "8", "9"},
+		Reply:           {"r"},
+		NextGroup:       {"tab"},
 	}
 	for a, keys := range want {
 		if got := m.Keys(a); !slices.Equal(got, keys) {
@@ -67,7 +67,7 @@ func TestLookup(t *testing.T) {
 		index  int
 		ok     bool
 	}{
-		{ListScreen, "n", New, 0, true},
+		{ListScreen, "n", NewConversation, 0, true},
 		{ConversationScreen, "n", No, 0, true}, // the same key, another screen
 		{ListScreen, "j", Down, 0, true},
 		{ListScreen, "down", Down, 1, true},
@@ -130,15 +130,17 @@ func TestOverride(t *testing.T) {
 
 // Swapping two keys is fine: the clash check runs on the effective map.
 func TestOverrideSwap(t *testing.T) {
-	m, err := New(map[string][]string{"new": {"a"}, "attach": {"n"}})
+	m, err := New(map[string][]string{"watch": {"a"}, "attach": {"w"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a, _, _ := m.Lookup(ListScreen, "a"); a != New {
-		t.Errorf(`"a" = %q, want new`, a)
-	}
-	if a, _, _ := m.Lookup(ListScreen, "n"); a != Attach {
-		t.Errorf(`"n" = %q, want attach`, a)
+	for _, s := range []Screen{ListScreen, ConversationScreen} {
+		if a, _, _ := m.Lookup(s, "a"); a != Watch {
+			t.Errorf(`%s: "a" = %q, want watch`, s, a)
+		}
+		if a, _, _ := m.Lookup(s, "w"); a != Attach {
+			t.Errorf(`%s: "w" = %q, want attach`, s, a)
+		}
 	}
 }
 
@@ -280,7 +282,7 @@ func TestHelp(t *testing.T) {
 			t.Errorf("help shows attach as %q, want the override", b.Keys)
 		}
 	}
-	for _, a := range []Action{Up, Down, Open, Back, New, Attach, Watch, Filter, NextGroup, Browser, Help, Quit} {
+	for _, a := range []Action{Up, Down, Open, Back, NewConversation, Attach, Watch, Filter, NextGroup, Browser, Help, Quit} {
 		if !slices.Contains(names, a) {
 			t.Errorf("list help lacks %s: %v", a, names)
 		}
