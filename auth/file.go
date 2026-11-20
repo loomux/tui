@@ -133,9 +133,11 @@ func (s *FileStore) Set(a Account, tok string) error {
 // file is no one's token and is removed.
 //
 // Set and Delete aren't coordinated across processes: a Set for the same
-// profile on another server landing between Delete's check and its
-// remove would be lost. T2 (login, logout, 401 handling) brings the
-// concurrent callers, and with them a lock if one is needed.
+// profile landing between Delete's check and its remove would be lost.
+// The callers that delete (logout and the 401 rule) only delete a token
+// they have just read back from the store (drop), which leaves that
+// window a few system calls wide, between two commands one person ran
+// at the same moment. No lock is taken for it.
 func (s *FileStore) Delete(a Account) error {
 	if err := a.check(); err != nil {
 		return fmt.Errorf("token file: %w", err)
