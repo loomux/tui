@@ -252,6 +252,9 @@ func TestCanonical(t *testing.T) {
 		"ctrl+m":     "enter",
 		"ctrl+[":     "esc",
 		"alt+ctrl+i": "alt+tab",
+		// and ctrl+space as NUL, which Bubble Tea names ctrl+@.
+		"ctrl+@":     "ctrl+space",
+		"ctrl+space": "ctrl+space",
 	}
 	for in, want := range ok {
 		got, err := Canonical(in)
@@ -286,6 +289,17 @@ func TestLookupAltSpace(t *testing.T) {
 	}
 	if a, _, ok := m.Lookup(ListScreen, "alt+ "); !ok || a != Filter {
 		t.Errorf(`"alt+ " on the list = %q, %v; want filter`, a, ok)
+	}
+}
+
+// A binding to ctrl+space fires on the key Bubble Tea reports for it.
+func TestLookupCtrlSpace(t *testing.T) {
+	m, err := New(map[string][]string{"filter": {"ctrl+space"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, _, ok := m.Lookup(ListScreen, "ctrl+@"); !ok || a != Filter {
+		t.Errorf(`"ctrl+@" on the list = %q, %v; want filter`, a, ok)
 	}
 }
 

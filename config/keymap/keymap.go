@@ -383,9 +383,10 @@ var ctrlAliases = map[string]string{"i": "tab", "m": "enter", "[": "esc"}
 // Canonical returns a key's one spelling: modifiers lower case, in the
 // order ctrl, alt, shift, joined by "+"; a named key lower case; a
 // character as itself, except under ctrl, where a letter is lower case
-// (terminals can't tell ctrl+s from ctrl+S) and ctrl+i, ctrl+m and
-// ctrl+[ are tab, enter and esc (a terminal sends them as those). " " is
-// space, alone or after modifiers ("alt+ ", as Bubble Tea writes it).
+// (terminals can't tell ctrl+s from ctrl+S). A terminal sends ctrl+i,
+// ctrl+m and ctrl+[ as tab, enter and esc, so they are those, and ctrl+@
+// is ctrl+space (both are NUL). " " is space, alone or after modifiers
+// ("alt+ ", as Bubble Tea writes it).
 func Canonical(key string) (string, error) {
 	if key == " " {
 		return "space", nil
@@ -437,6 +438,10 @@ func Canonical(key string) (string, error) {
 			if alias, ok := ctrlAliases[base]; ok {
 				has["ctrl"] = false
 				base = alias
+			}
+			// ctrl+space is sent as NUL, which Bubble Tea names ctrl+@.
+			if base == "@" {
+				base = "space"
 			}
 		}
 	} else {
