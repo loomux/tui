@@ -268,7 +268,7 @@ func TestCommandString(t *testing.T) {
 	}
 }
 
-func TestClean(t *testing.T) {
+func TestCleanText(t *testing.T) {
 	for in, want := range map[string]string{
 		"cc-hub":                  "cc-hub",
 		"a\x1b[31mred\x07":        "a[31mred",
@@ -278,8 +278,8 @@ func TestClean(t *testing.T) {
 		"bad\xffutf8":             "badutf8",
 		"naïve ☕":                 "naïve ☕",
 	} {
-		if got := clean(in); got != want {
-			t.Errorf("clean(%q) = %q, want %q", in, got, want)
+		if got := Clean(in); got != want {
+			t.Errorf("Clean(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

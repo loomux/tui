@@ -86,15 +86,15 @@ func newChooser() chooser {
 func (ch chooser) plan(ctx context.Context, info *client.AttachInfo, cfg Config) Plan {
 	var p Plan
 	skip := func(c client.AttachCommand, argv []string, reason string) {
-		line := clean(c.Command)
+		line := Clean(c.Command)
 		if line == "" {
 			line = shellLine(argv)
 		}
-		p.Skipped = append(p.Skipped, Skipped{Via: clean(c.Via), Line: line, Reason: reason})
+		p.Skipped = append(p.Skipped, Skipped{Via: Clean(c.Via), Line: line, Reason: reason})
 	}
 	for _, c := range info.AttachCommands {
 		if len(cfg.Prefer) > 0 && !slices.Contains(cfg.Prefer, c.Via) {
-			skip(c, c.Argv, fmt.Sprintf("%s isn't in [attach] prefer in the config", clean(c.Via)))
+			skip(c, c.Argv, fmt.Sprintf("%s isn't in [attach] prefer in the config", Clean(c.Via)))
 			continue
 		}
 		cmd, reason := ch.command(c.Via, c.Argv, c.Command)
@@ -125,7 +125,7 @@ func (ch chooser) plan(ctx context.Context, info *client.AttachInfo, cfg Config)
 		case info.TmuxSession == "":
 			reason = "the server named no tmux session"
 		case ch.hasSession(ctx, cmd.Path, info.TmuxSocket, info.TmuxSession) != nil:
-			reason = fmt.Sprintf("the task runs on the server's own machine (target %s), and its tmux session isn't on this one", clean(info.Target.Name))
+			reason = fmt.Sprintf("the task runs on the server's own machine (target %s), and its tmux session isn't on this one", Clean(info.Target.Name))
 		}
 		if reason != "" {
 			skip(c, nil, reason)
@@ -150,9 +150,9 @@ func (ch chooser) command(via string, argv []string, line string) (Command, stri
 	}
 	path, err := ch.lookPath(argv[0])
 	if err != nil {
-		return Command{}, fmt.Sprintf("%s isn't installed (not on PATH)", clean(argv[0]))
+		return Command{}, fmt.Sprintf("%s isn't installed (not on PATH)", Clean(argv[0]))
 	}
-	return Command{Via: clean(via), Argv: slices.Clone(argv), Path: path}, ""
+	return Command{Via: Clean(via), Argv: slices.Clone(argv), Path: path}, ""
 }
 
 // checkArgv refuses an argv that doesn't start with a program's name: the
@@ -215,7 +215,7 @@ func tmuxHasSession(ctx context.Context, tmux, socket, session string) error {
 func shellLine(argv []string) string {
 	words := make([]string, len(argv))
 	for i, arg := range argv {
-		words[i] = shellQuote(clean(arg))
+		words[i] = shellQuote(Clean(arg))
 	}
 	return strings.Join(words, " ")
 }
@@ -229,11 +229,11 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// clean makes text from the server safe to print on a terminal: control
+// Clean makes text from the server safe to print on a terminal: control
 // characters (so no escape sequence), bidirectional-text controls and
 // bytes that aren't UTF-8 are dropped, and a tab or line break becomes a
 // space.
-func clean(s string) string {
+func Clean(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		switch {

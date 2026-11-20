@@ -66,6 +66,19 @@ func TestEnvReachesTheServer(t *testing.T) {
 	}
 }
 
+// A test that replaces PATH with its fake programs keeps its servers.
+func TestServerSurvivesAnotherPath(t *testing.T) {
+	s := New(t)
+	t.Setenv("PATH", t.TempDir())
+	s.NewSession("one", "/bin/sleep 600")
+	if !s.HasSession("one") {
+		t.Error("no session with tmux off PATH")
+	}
+	if New(t) == nil || Binary() == "" {
+		t.Error("no server with tmux off PATH")
+	}
+}
+
 // A second tmux client attached from a session of another server shows as
 // a client, and detaching it (what the server does when a hold ends) ends
 // it: the pieces the attach tests are built from.

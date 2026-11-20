@@ -27,6 +27,13 @@ import (
 // socket is every server's socket name: each has a directory of its own.
 const socket = "loomuxtest"
 
+// tmux is the tmux program, found when the test binary starts: a test
+// may then set PATH to its own fake programs and still have its servers.
+var tmux, tmuxErr = exec.LookPath("tmux")
+
+// Binary is the tmux program's file, for a script a test writes.
+func Binary() string { return tmux }
+
 // Server is a tmux server of the test's own.
 type Server struct {
 	// Dir is the server's TMUX_TMPDIR.
@@ -41,11 +48,11 @@ type Server struct {
 // tmux installed the test is skipped; in CI, where it must be, it fails.
 func New(tb testing.TB) *Server {
 	tb.Helper()
-	if _, err := exec.LookPath("tmux"); err != nil {
+	if tmuxErr != nil {
 		if os.Getenv("CI") != "" {
-			tb.Fatalf("tmuxtest: tmux isn't installed: %v", err)
+			tb.Fatalf("tmuxtest: tmux isn't installed: %v", tmuxErr)
 		}
-		tb.Skipf("tmuxtest: tmux isn't installed: %v", err)
+		tb.Skipf("tmuxtest: tmux isn't installed: %v", tmuxErr)
 	}
 	// /tmp rather than TMPDIR: a long TMPDIR would push the socket's path
 	// past what a Unix socket address holds.
@@ -73,13 +80,14 @@ func (s *Server) SocketPath() string {
 // Env is the environment of a process that reaches this server with
 // `tmux -L Socket`: the test's own, with TMUX_TMPDIR set to Dir and
 // without TMUX and TMUX_PANE, so that it isn't taken for a client of the
-// tmux the test may itself run in.
+// tmux the test may itself run in. SHELL is /bin/sh: the server runs a
+// session's command with it, whatever the developer's own shell is.
 func (s *Server) Env() []string {
-	env := []string{"TMUX_TMPDIR=" + s.Dir}
+	env := []string{"TMUX_TMPDIR=" + s.Dir, "SHELL=/bin/sh"}
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
 		switch name {
-		case "TMUX", "TMUX_PANE", "TMUX_TMPDIR":
+		case "TMUX", "TMUX_PANE", "TMUX_TMPDIR", "SHELL":
 		default:
 			env = append(env, kv)
 		}
@@ -89,7 +97,7 @@ func (s *Server) Env() []string {
 
 // Command is a tmux command on this server, not yet run.
 func (s *Server) Command(args ...string) *exec.Cmd {
-	cmd := exec.Command("tmux", append([]string{"-L", s.Socket, "-f", "/dev/null"}, args...)...)
+	cmd := exec.Command(tmux, append([]string{"-L", s.Socket, "-f", "/dev/null"}, args...)...)
 	cmd.Env = s.Env()
 	return cmd
 }
@@ -116,7 +124,8 @@ func (s *Server) run(args ...string) (string, error) {
 }
 
 // NewSession starts a detached 80×24 session called name running
-// command, a shell line. The session ends when the command does.
+// command, a line for /bin/sh, with the PATH the server was started
+// with. The session ends when the command does.
 func (s *Server) NewSession(name, command string) {
 	s.tb.Helper()
 	s.Tmux("new-session", "-d", "-s", name, "-x", "80", "-y", "24", command)
