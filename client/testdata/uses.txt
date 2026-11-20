@@ -378,6 +378,20 @@ GET /api/v1/sessions response-header Content-Type
 GET /api/v1/sessions status 200
 GET /api/v1/sessions status 401
 
+# The link flow (`loomux login`). The client never makes this call: the
+# web's /link page does, for the terminal, with the token hash and the
+# label of the link the terminal showed. The terminal's wait is GET
+# /api/v1/sessions above, 401 until this call has made the session.
+POST /api/v1/sessions
+POST /api/v1/sessions request - object
+POST /api/v1/sessions request .client_kind string omitempty
+POST /api/v1/sessions request .label string omitempty
+POST /api/v1/sessions request .token_hash string
+POST /api/v1/sessions request-header Authorization
+POST /api/v1/sessions status 201
+POST /api/v1/sessions status 403
+POST /api/v1/sessions status 409
+
 POST /api/v1/logout
 POST /api/v1/logout request-header Authorization
 POST /api/v1/logout status 204

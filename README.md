@@ -13,11 +13,10 @@ the web client.
 
 ## Status
 
-**Pre-release, not usable yet.** So far there is `loomux version`, plus
-the config file, the token stores that `loomux login` will use and the
-keymap the screens will use. Logging
-in, the list, chat and attach are added ticket by ticket, following the
-build plan in the design.
+**Pre-release, not usable yet.** So far there are `loomux login`,
+`loomux logout` and `loomux version`, plus the config file, the token
+stores and the keymap the screens will use. The list, chat and attach
+are added ticket by ticket, following the build plan in the design.
 
 ## Design
 
@@ -140,6 +139,53 @@ in effect on the current screen.
 | `newline` | `alt+enter` | composer | new line |
 | `help` | `?` | list, conversation, transcript, help | help |
 | `quit` | `q` | list, conversation, transcript, help | quit |
+
+## Signing in
+
+`loomux login` signs a profile in from a browser, with no password in the
+terminal. It needs server v0.3.151 or later and a web client that has the
+`/link` page.
+
+```
+$ loomux login
+Signing in to profile "test" (https://loomux.example.net) as "laptop".
+
+Open this link in a browser that is signed in to Loomux:
+
+  https://loomux.example.net/link#h=ea866a75…17afffd0&label=laptop
+
+Its page must show this code. Approve only if it does:
+
+  7ESB-UHZP
+
+Waiting for the approval, for up to 10 minutes (ctrl+c cancels)…
+Signed in to profile "test" (https://loomux.example.net) as "laptop".
+```
+
+- **The token stays on the machine.** The terminal makes its own token
+  and the link carries only its SHA-256 hash, in the part of the URL a
+  browser doesn't send. The token is never printed, and it goes into the
+  token store only once the server has accepted it.
+- **Compare the code.** Approve only when the page shows the code your
+  terminal is showing right now. A link that someone sends you is for
+  their terminal, not yours.
+- **The link is printed as well as opened.** It opens in your browser
+  when there is a display (`xdg-open`, or `open` on macOS). On a remote
+  machine, or with `--no-browser`, open the printed link in any browser
+  that is signed in to Loomux. The label is the machine's host name.
+- **Nothing is stored unless it's approved.** After ctrl+c, or 10 minutes
+  without an approval, the terminal holds no token. If the link is
+  approved after that, choose Undo approval on its page.
+- **`loomux login` again** says you're signed in. If the server no
+  longer accepts the stored token (revoked from the web, or expired),
+  the token is deleted and the login starts over.
+
+`loomux logout` ends the session on the server, then deletes the token.
+If the server can't be reached, the token is deleted all the same, and
+`loomux` says that the session may still exist: revoke it in the web
+under Settings → Devices. It exits 1 in that case.
+
+Both take `--profile NAME`.
 
 ## License
 
