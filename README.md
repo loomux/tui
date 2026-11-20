@@ -19,6 +19,10 @@ keymap the screens will use. Logging
 in, the list, chat and attach are added ticket by ticket, following the
 build plan in the design.
 
+The conversation screen (messages as markdown, the live stream, task
+status, a task's transcript) is built in `ui/conversation`, but no
+command opens it yet: the list that does comes next.
+
 ## Design
 
 The design is
