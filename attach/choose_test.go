@@ -270,7 +270,7 @@ func TestCommandString(t *testing.T) {
 
 func TestCleanText(t *testing.T) {
 	for in, want := range map[string]string{
-		"hub":                  "hub",
+		"hub":                     "hub",
 		"a\x1b[31mred\x07":        "a[31mred",
 		"two\nlines\tand a tab":   "two lines and a tab",
 		"rtl\u202eoverride\u2066": "rtloverride",
