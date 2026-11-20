@@ -30,7 +30,7 @@ func remote(cmds ...client.AttachCommand) *client.AttachInfo {
 		TaskID: "task-1", TmuxSession: "loomux-task-1", TmuxSocket: "loomux",
 		AttachCommand:  "tmux -L loomux attach -t loomux-task-1",
 		AttachCommands: cmds,
-		Target:         client.AttachTarget{ID: "t1", Name: "cc-hub", Kind: "remote", Host: "box.example.net", User: "loomux"},
+		Target:         client.AttachTarget{ID: "t1", Name: "hub", Kind: "remote", Host: "box.example.net", User: "loomux"},
 	}
 }
 
@@ -270,7 +270,7 @@ func TestCommandString(t *testing.T) {
 
 func TestCleanText(t *testing.T) {
 	for in, want := range map[string]string{
-		"cc-hub":                  "cc-hub",
+		"hub":                  "hub",
 		"a\x1b[31mred\x07":        "a[31mred",
 		"two\nlines\tand a tab":   "two lines and a tab",
 		"rtl\u202eoverride\u2066": "rtloverride",
