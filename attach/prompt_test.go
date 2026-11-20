@@ -87,3 +87,31 @@ func TestHeldLine(t *testing.T) {
 		}
 	}
 }
+
+func TestPause(t *testing.T) {
+	// It waits for enter, and takes that line alone.
+	in := strings.NewReader("\nrest")
+	var out bytes.Buffer
+	Pause(context.Background(), in, &out, "Press enter.")
+	if rest, _ := io.ReadAll(in); string(rest) != "rest" || out.String() != "Press enter. " {
+		t.Errorf("rest %q, shown %q", rest, out.String())
+	}
+	// It ends with its context, and with the input.
+	never, w := io.Pipe()
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { Pause(ctx, never, io.Discard, "Press enter."); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("Pause didn't wait")
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Pause didn't end with its context")
+	}
+	Pause(context.Background(), strings.NewReader(""), io.Discard, "Press enter.")
+}

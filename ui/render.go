@@ -195,6 +195,9 @@ var hints = map[keymap.Screen][]struct {
 
 // footer is the last line: the screen's main keys, or a notice.
 func (a *App) footer() string {
+	if a.dialog != nil {
+		return a.dialogFooter()
+	}
 	if a.notice != "" {
 		return fit(" "+a.notice, a.width)
 	}

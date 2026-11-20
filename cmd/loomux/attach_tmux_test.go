@@ -31,6 +31,11 @@ import (
 // and exits with its status. The terminal tests start it that way in a
 // tmux pane, so what attaches is the client's own main, on a terminal.
 func TestMain(m *testing.M) {
+	// Started with arguments that aren't the test binary's own: the tmux
+	// window the screens open runs this program with "attach ...".
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-test.") {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
 	if args, ok := os.LookupEnv("LOOMUX_TEST_RUN"); ok {
 		if pidfile := os.Getenv("LOOMUX_TEST_PIDFILE"); pidfile != "" {
 			if err := os.WriteFile(pidfile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
@@ -59,6 +64,15 @@ const agentSession = "agent"
 // attachInTerminal starts `loomux <args>` in a terminal and waits until
 // its attach command has attached.
 func attachInTerminal(t *testing.T, e *attachEnv, args string) *inTerminal {
+	t.Helper()
+	it := startInTerminal(t, e, args)
+	it.agent.WaitClients(agentSession, 1, 20*time.Second)
+	return it
+}
+
+// startInTerminal starts `loomux <args>` in a pane of the terminal's
+// tmux, with the fake ssh that attaches to the agent's session.
+func startInTerminal(t *testing.T, e *attachEnv, args string) *inTerminal {
 	t.Helper()
 	it := &inTerminal{t: t, e: e, agent: tmuxtest.New(t), terminal: tmuxtest.New(t), dir: t.TempDir()}
 	// By its full name: PATH holds the test's fake programs alone.
@@ -93,7 +107,6 @@ func attachInTerminal(t *testing.T, e *attachEnv, args string) *inTerminal {
 			t.Logf("the terminal shows:\n%s", it.terminal.Capture("terminal"))
 		}
 	})
-	it.agent.WaitClients(agentSession, 1, 20*time.Second)
 	return it
 }
 

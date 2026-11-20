@@ -1,9 +1,10 @@
 // Command loomux is the terminal client for Loomux.
 //
 // With no command it shows the attention-first list of conversations for
-// the selected profile. version prints the client's version, and attach
-// attaches this terminal to an agent's tmux session under a hold. Login,
-// logout, open and the other screens come in later tickets.
+// the selected profile, from which a conversation's agent can be attached
+// to. version prints the client's version, and attach attaches this
+// terminal to an agent's tmux session under a hold. Login, logout, open
+// and the other screens come in later tickets.
 package main
 
 import (
@@ -15,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Loomux/tui/attach"
 	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config"
@@ -24,8 +26,8 @@ import (
 
 const usage = `usage: loomux [--profile NAME]
        loomux version
-       loomux attach [--profile NAME] [--force] <conversation|task>
-       loomux attach [--profile NAME] [--force] --task ID
+       loomux attach [--profile NAME] [--force] [--keep-open] <conversation|task>
+       loomux attach [--profile NAME] [--force] [--keep-open] --task ID
 
   (no command)  the list of conversations, on the profile's server
   version       print the client version and the server release it is pinned to
@@ -40,6 +42,9 @@ const usage = `usage: loomux [--profile NAME]
                   without asking
   --task ID       the id is a task's (otherwise a conversation's is
                   tried first)
+  --keep-open     after a failure, wait for enter before exiting: for a
+                  window that closes with the command, as the list's
+                  attach opens inside tmux
 `
 
 func main() {
@@ -48,7 +53,10 @@ func main() {
 
 // runUI runs the screens until they quit; tests replace it.
 var runUI = func(o ui.Options) error {
-	_, err := tea.NewProgram(ui.New(o)).Run()
+	app := ui.New(o)
+	// A hold taken for an attach the screens ended before is given back.
+	defer app.Close()
+	_, err := tea.NewProgram(app).Run()
 	return err
 }
 
@@ -110,5 +118,31 @@ func list(profile string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return runUI(ui.Options{Profile: p.Name, API: c, Keys: cfg.Keymap})
+	return runUI(ui.Options{Profile: p.Name, API: c, Keys: cfg.Keymap, Attach: attachFromList(c, cfg, p)})
+}
+
+// attachFromList is how the list's attach key attaches: the config's
+// [attach], and, for a tmux window of its own, this program run as
+// `loomux attach --profile NAME --keep-open` (the list adds the task).
+func attachFromList(c *client.Client, cfg *config.Config, p config.Profile) *ui.Attach {
+	at := &ui.Attach{
+		API:    c,
+		Config: attach.Config{Prefer: cfg.Attach.Prefer, KubectlContext: cfg.Attach.Kubectl.Context},
+		Mode:   cfg.Attach.Mode,
+		InTmux: os.Getenv("TMUX") != "",
+	}
+	// Without this program's own path there is no window to open: the
+	// attach is then on this terminal.
+	if exe, err := os.Executable(); err == nil {
+		at.Window = []string{exe, "attach", "--profile", p.Name, "--keep-open"}
+	}
+	// A tmux window starts from the tmux server's environment, not this
+	// program's: what chooses the config, the token store and the server
+	// here has to reach it by name.
+	for _, name := range []string{"LOOMUX_SERVER", "XDG_CONFIG_HOME", "XDG_STATE_HOME"} {
+		if v := os.Getenv(name); v != "" {
+			at.WindowEnv = append(at.WindowEnv, name+"="+v)
+		}
+	}
+	return at
 }
