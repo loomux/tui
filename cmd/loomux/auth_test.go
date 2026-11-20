@@ -498,6 +498,25 @@ func TestLogoutNotSignedIn(t *testing.T) {
 	}
 }
 
+// No keyring: there is nothing logout can read or delete, and it says
+// why.
+func TestLogoutWithoutAKeyring(t *testing.T) {
+	w := newWorld(t)
+	writeConfig(t, fmt.Sprintf("[profiles.test]\nserver = %q\n", w.srv.URL))
+	keyring.MockInitWithError(errors.New("org.freedesktop.secrets was not provided by any .service files"))
+	defer keyring.MockInit()
+	var stdout, stderr output
+	if code := run([]string{"logout"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if got := stderr.String(); !strings.HasPrefix(got, "loomux: logout: the keyring can't be used") || strings.Count(got, "\n") != 1 {
+		t.Errorf("stderr = %q, want the keyring's error, once", got)
+	}
+	if stdout.String() != "" {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+}
+
 // The server can't be reached: the token is deleted all the same, and
 // the user is told the session may still be there.
 func TestLogoutWhenTheServerCantBeReached(t *testing.T) {

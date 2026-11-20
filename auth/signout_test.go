@@ -146,12 +146,34 @@ func TestLogoutClearsAnUnreadableEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Stored || res.NotRevoked == nil {
-		t.Errorf("result = %+v, want an entry cleared without a revocation", res)
+	if !res.Stored || !errors.Is(res.NotRevoked, ErrInvalid) {
+		t.Errorf("result = %+v, want an entry cleared without a revocation, as ErrInvalid", res)
 	}
 	if _, err := os.Stat(store.path(a)); !os.IsNotExist(err) {
 		t.Errorf("the entry is still there: %v", err)
 	}
+	if reqs := ls.requests(); len(reqs) != 0 {
+		t.Errorf("requests = %v, want none", reqs)
+	}
+}
+
+// A token that can't be read is cleared too: logout leaves none behind.
+func TestLogoutClearsATokenItCantRead(t *testing.T) {
+	ls := newLinkServer(t)
+	a := Account{Profile: "test", Server: ls.URL}
+	files := newFileStore(t)
+	if err := files.Set(a, token); err != nil {
+		t.Fatal(err)
+	}
+	denied := errors.New("token file: permission denied")
+	res, err := Logout(testCtx(t), failingGet{Store: files, err: denied}, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Stored || !errors.Is(res.NotRevoked, denied) {
+		t.Errorf("result = %+v, want the read's error as why nothing was revoked", res)
+	}
+	wantNothingStored(t, files, a)
 	if reqs := ls.requests(); len(reqs) != 0 {
 		t.Errorf("requests = %v, want none", reqs)
 	}

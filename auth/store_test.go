@@ -255,13 +255,30 @@ func TestFileStoreCorruptFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err := s.Get(acct)
-		if err == nil || errors.Is(err, ErrNotFound) {
-			t.Errorf("content %q: Get = %q, %v; want an error", content, got, err)
+		if !errors.Is(err, ErrInvalid) {
+			t.Errorf("content %q: Get = %q, %v; want ErrInvalid", content, got, err)
 			continue
 		}
 		if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "two words") {
 			t.Errorf("content %q: error %q repeats the file", content, err)
 		}
+	}
+}
+
+// A keyring entry that isn't a token (something else wrote it) is
+// ErrInvalid, and the error doesn't repeat it.
+func TestKeyringInvalidEntry(t *testing.T) {
+	s := NewKeyringStore("/x/config.toml")
+	if err := keyring.Set("loomux", acct.String(), "two words"); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Delete(acct)
+	got, err := s.Get(acct)
+	if !errors.Is(err, ErrInvalid) || got != "" {
+		t.Fatalf("Get = %q, %v; want ErrInvalid", got, err)
+	}
+	if strings.Contains(err.Error(), "two words") {
+		t.Errorf("error %q repeats the entry", err)
 	}
 }
 

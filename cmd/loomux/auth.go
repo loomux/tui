@@ -135,11 +135,14 @@ func logout(profile string, args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signalContext()
 	defer stop()
 	res, err := auth.Logout(ctx, store, auth.AccountFor(p))
-	if !res.Stored && err == nil {
+	switch {
+	case !res.Stored && err != nil: // the store can't be used at all
+		fmt.Fprintf(stderr, "loomux: logout: %v\n", err)
+		return 1
+	case !res.Stored:
 		fmt.Fprintf(stdout, "Not signed in to profile %q (%s): nothing to do.\n", p.Name, p.Server)
 		return 0
-	}
-	if res.NotRevoked == nil && err == nil {
+	case res.NotRevoked == nil && err == nil:
 		fmt.Fprintf(stdout, "Signed out of profile %q (%s).\n", p.Name, p.Server)
 		return 0
 	}
