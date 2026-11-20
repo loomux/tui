@@ -879,11 +879,20 @@ func TestReleaseDuringTheOfferEndsIt(t *testing.T) {
 			t.Errorf("Release: %v", err)
 		}
 	}()
+	left := make(chan struct{})
 	_, err = s.Run(ctx(t), Terminal{Offer: func(c context.Context, _ Attempt, _ Command) bool {
 		close(asked)
 		<-c.Done() // a person who never answers
+		close(left)
 		return true
 	}})
+	// The question was told to end, and had ended when Run returned: it
+	// isn't still reading the terminal.
+	select {
+	case <-left:
+	default:
+		t.Error("Run returned with the question still up")
+	}
 	<-released
 	var failed *FailedError
 	if !errors.As(err, &failed) || exists(w.file("second-ran"))() {
