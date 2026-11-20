@@ -1,34 +1,44 @@
 # The release run (R3, LOOM-278; the design in loomux/server,
 # docs/design/tui-client-design.md, "Releases and versioning" and
-# "Packaging"; how to cut one: docs/release.md).
+# "Packaging"; how it works and how to cut a milestone: docs/release.md).
+# It follows loomux/server's .github/workflows/image.yml (LOOM-129).
 #
-# It runs only when a v* tag is pushed: by hand, or by
-# `deploy/release.sh reserve`, which a person runs with their own GitHub
-# credentials. A pull request or a branch push never publishes anything
-# (ci.yml checks those, and its TestBuild runs the same build script).
+# Two things start it, and nothing else (TestOnlyMainAndTagsPublish):
 #
-#   check   the tag is v + SemVer, on main, and a milestone (X.Y.0, -pre)
-#           has its CHANGELOG.md section
-#   build   vet and race tests on the tagged commit, then deploy/build.sh:
-#           CGO-free binaries for linux and darwin on amd64 and arm64, the
-#           version stamped with -ldflags -X, and SHA256SUMS; a build
-#           provenance attestation for each binary
-#   release the GitHub pre-release (every 0.y.z and -pre version is one,
-#           never "latest") with the binaries and SHA256SUMS, created as a
-#           draft and published once every file is up
+#   a merge to main   the next patch pre-release: the version job reserves
+#                     it by creating its tag, and this same run builds and
+#                     releases it (a tag the run's GITHUB_TOKEN creates
+#                     starts no other workflow)
+#   a pushed v* tag   a milestone a person cuts (0.1.0, each MINOR, an
+#                     -rc, 1.0.0), with its CHANGELOG.md section
+#
+# A pull request or another branch never publishes anything (ci.yml
+# checks those, and its TestBuild runs the same build script).
+#
+#   version  the version this run releases: reserved (a merge) or checked
+#            (a tag); none before the first milestone, or for a merge a
+#            newer release already covers, and then nothing else runs
+#   build    vet and race tests on the commit, then deploy/build.sh:
+#            CGO-free binaries for linux and darwin on amd64 and arm64, the
+#            version stamped with -ldflags -X, and SHA256SUMS; a build
+#            provenance attestation for each binary
+#   release  the GitHub pre-release (every 0.y.z and -pre version is one,
+#            never "latest") with the binaries and SHA256SUMS, created as a
+#            draft and published once every file is up
 #
 # Actions are pinned by commit, with the release in a comment.
 name: release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
 
-# One run per tag. v* tags are immutable (a ruleset), so a tag is pushed
-# once; a re-run of its run finishes what an earlier attempt didn't.
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+# No concurrency group for the run, as in the server: a group keeps one
+# pending run and cancels the others, which there dropped the middle of
+# three quick merges with no version at all (LOOM-129). Racing merges
+# each reserve their own version instead, and only the release job
+# below waits, per version.
 
 permissions: {}
 
@@ -39,28 +49,53 @@ env:
   GOWORK: "off"
 
 jobs:
-  check:
+  # The version, settled before anything is built. A merge reserves the
+  # next patch: deploy/release.sh reserve creates its tag on the merge
+  # commit through the API, which refuses a tag that exists, so racing
+  # merges each get their own; a re-run keeps the version the commit
+  # already has. v* tags are immutable (a ruleset), so a run that fails
+  # after this burns the number unless it is re-run: SemVer allows the
+  # gap, and no version is reused. A pushed tag is checked: v + SemVer,
+  # on main, with its CHANGELOG.md section.
+  version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
+      contents: write
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The tags and main, to check the tag is on main.
+          # The tags and main: the line continues from the highest tag,
+          # and a released commit must be on main.
           fetch-depth: 0
           persist-credentials: false
       - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          version="$(deploy/release.sh check "${GITHUB_REF_NAME}")"
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            version="$(deploy/release.sh check "${GITHUB_REF_NAME}")"
+          elif [ "${GITHUB_REF}" = refs/heads/main ]; then
+            version="$(deploy/release.sh reserve "${GITHUB_SHA}" patch)"
+            # reserve never makes an X.Y.0: one here is a milestone a
+            # person tagged the commit with before this run reserved.
+            # It is held to the tag's check here too.
+            case "${version}" in
+            *.0) deploy/release.sh check "v${version}" >/dev/null ;;
+            esac
+          else
+            echo "::error::${GITHUB_REF} is neither main nor a v* tag"
+            exit 1
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "Version: ${version}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version: ${version:-none}" >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    needs: check
+    needs: version
+    if: needs.version.outputs.version != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -79,13 +114,14 @@ jobs:
 
       - run: go vet ./...
 
-      # The tagged commit passed ci.yml on main; this is the same run on
-      # the toolchain that builds the release.
+      # The commit passed ci.yml as a pull request (and runs it again on
+      # main); this is the same run on the toolchain that builds the
+      # release.
       - run: go test -race ./...
 
       - name: Build
         env:
-          VERSION: ${{ needs.check.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: sh deploy/build.sh "${VERSION}" dist
 
       - name: Attest
@@ -101,11 +137,18 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [check, build]
+    needs: [version, build]
+    if: needs.version.outputs.version != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+    # One run at a time publishes a version: a milestone tagged before the
+    # merge's own run reserved is released by both runs, and the second
+    # finds it published. Per version, so no merge waits on another's.
+    concurrency:
+      group: release-v${{ needs.version.outputs.version }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -120,7 +163,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.check.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -eu
           tag="v${VERSION}"
@@ -133,7 +176,8 @@ jobs:
           fi
           # A milestone's notes are its CHANGELOG section; a patch's, the
           # commits merged to main since the previous release (each a pull
-          # request, "(#N)").
+          # request, "(#N)"): usually the one merge, and also any older
+          # merge whose own run released nothing.
           if ! deploy/release.sh notes "${VERSION}" > notes.md 2>/dev/null; then
             deploy/release.sh log "${GITHUB_SHA}" > notes.md
           fi
@@ -147,3 +191,4 @@ jobs:
           gh release create "${tag}" --verify-tag --draft ${pre} --latest=false \
             --title "loomux ${VERSION}" --notes-file notes.md dist/*
           gh release edit "${tag}" --draft=false
+          echo "Released \`${tag}\`" >> "$GITHUB_STEP_SUMMARY"

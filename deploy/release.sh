@@ -18,20 +18,19 @@
 #                                              nothing before the first release)
 #   deploy/release.sh log <commit>             a patch's notes: main's commits
 #                                              since the previous release
-#   deploy/release.sh check <tag>              the release workflow's gate: print
-#                                              the version of a tag on main, and
-#                                              refuse a milestone (X.Y.0, -pre)
-#                                              without its CHANGELOG section
+#   deploy/release.sh check <tag>              the gate for a pushed tag: print
+#                                              the version of a tag on main
+#                                              whose CHANGELOG section is there
 #
 # A tag is "v" + a SemVer 2.0.0 version without build metadata. Every
 # 0.y.z version and every version with a pre-release part (-alpha.1,
 # -rc.2, ...) is a pre-release. A milestone's notes are its section of
 # CHANGELOG.md ("## [X.Y.Z] - YYYY-MM-DD").
 #
-# Unlike the server's, nothing runs reserve on a merge: a person runs it
-# with their own GitHub credentials, and the tag it creates starts the
-# release workflow. RELEASE_BRANCH (default origin/main) is where a
-# released commit must be.
+# As in the server, the release workflow runs reserve on every merge to
+# main, and builds and releases the version in the same run; a person
+# pushes a milestone's tag, which check gates. RELEASE_BRANCH (default
+# origin/main) is where a released commit must be.
 set -eu
 
 semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$'
@@ -44,10 +43,13 @@ on_branch() {
   git merge-base --is-ancestor "$1" "$branch" 2>/dev/null
 }
 
-# tagged <sha>: the X.Y.Z version the commit already has, if any.
+# tagged <sha>: the X.Y.Z version the commit already has, if any; the
+# lowest, by number, when it has more: a merge's own patch, not the
+# milestone a person tagged the same commit with afterwards.
 tagged() {
   git tag --points-at "$1" --list 'v*' |
-    sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | head -n 1
+    sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' |
+    sort -t. -k1,1n -k2,2n -k3,3n | head -n 1
 }
 
 case "${1:-}" in
@@ -99,10 +101,10 @@ next)
   esac
   ;;
 reserve)
-  # Every reserved commit gets its own version, even when two reserves
-  # race: the tag is created through the API, which refuses one that
-  # exists; the loser fetches the tags and takes the next. Needs gh
-  # signed in with the right to create tags, and GITHUB_REPOSITORY
+  # Every merge gets its own version, even when merges race: the tag is
+  # created through the API, which refuses one that exists; the loser
+  # fetches the tags and takes the next. Needs GH_TOKEN (or gh signed
+  # in) with the right to create tags, and GITHUB_REPOSITORY
   # (owner/name).
   kind="${3:-patch}"
   # The tags and origin/main (a fetch with --tags fetches both). Stale,
@@ -122,7 +124,7 @@ reserve)
   trap 'rm -f "$err"' EXIT
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     git fetch -q --tags --force origin 2>/dev/null || true
-    # Someone else reserving the same commit may have won the race.
+    # Another run reserving the same commit may have won the race.
     existing="$(tagged "$sha")"
     if [ -n "$existing" ]; then echo "$existing"; exit 0; fi
     latest="$("$0" latest --all)"
@@ -163,17 +165,14 @@ check)
   v="$("$0" version "$tag")" || exit 1
   sha="$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}")" || die "check: no tag $tag"
   on_branch "$sha" || die "check: $tag is not on ${branch#origin/}"
-  # A milestone says what it is: its notes are its CHANGELOG section, as
-  # the tagged commit has it.
-  case "$v" in
-  *-* | *.*.0)
-    changelog="$(mktemp)"
-    trap 'rm -f "$changelog"' EXIT
-    git show "$sha:CHANGELOG.md" > "$changelog" 2>/dev/null || true
-    "$0" notes "$v" "$changelog" >/dev/null 2>&1 ||
-      die "check: $tag is a milestone, and CHANGELOG.md at it has no '## [$v] - <date>' section (deploy/changelog.sh release)"
-    ;;
-  esac
+  # A pushed tag is a milestone (a merge's patch is reserve's), and says
+  # what it is: its notes are its CHANGELOG section, as the tagged commit
+  # has it.
+  changelog="$(mktemp)"
+  trap 'rm -f "$changelog"' EXIT
+  git show "$sha:CHANGELOG.md" > "$changelog" 2>/dev/null || true
+  "$0" notes "$v" "$changelog" >/dev/null 2>&1 ||
+    die "check: CHANGELOG.md at $tag has no '## [$v] - <date>' section (deploy/changelog.sh release): a pushed tag is a milestone, and a merge reserves its own patch"
   echo "$v"
   ;;
 *)

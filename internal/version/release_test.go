@@ -176,8 +176,8 @@ func TestReleaseLatest(t *testing.T) {
 // remote, the branch a reserved commit must be on.
 var reserveEnv = []string{"GITHUB_REPOSITORY=loomux/x", "RELEASE_BRANCH=main"}
 
-// Two reserves racing for the next version both get one. The fake gh
-// refuses the first tag as if another reserve had just created it (and
+// Two merges' runs racing for the next version both get one. The fake gh
+// refuses the first tag as if the other run had just created it (and
 // that tag appears, as a fetch would bring it); reserve takes the next.
 func TestReleaseReserve(t *testing.T) {
 	r := newRepo(t)
@@ -209,9 +209,25 @@ esac
 	}
 }
 
-// Two people reserving the same commit at once give it one version: the
-// one that loses the race finds the commit tagged and prints that,
-// rather than tag it again with the next number.
+// A merge's commit that also has a milestone tag pushed after its run
+// reserved keeps its own patch when that run is re-run: the lowest of its
+// versions, by number (0.9.5 before 0.10.0, which sorts first as text).
+func TestReleaseReserveKeepsTheMergesVersion(t *testing.T) {
+	r := newRepo(t)
+	r.git("commit", "-q", "--allow-empty", "-m", "base")
+	r.git("tag", "v0.9.4")
+	r.git("commit", "-q", "--allow-empty", "-m", "merge")
+	r.git("tag", "v0.9.5")
+	r.git("tag", "v0.10.0")
+	r.git("tag", "v0.10.0-rc.1") // not a version reserve gives
+	if got, ok := r.run("#!/bin/sh\necho called >&2; exit 1\n", reserveEnv, "reserve", "main", "patch"); !ok || got != "0.9.5" {
+		t.Errorf("reserve = %q, %v; want 0.9.5, the merge's own version", got, ok)
+	}
+}
+
+// Two reserves of the same commit at once give it one version: the one
+// that loses the race finds the commit tagged and prints that, rather
+// than tag it again with the next number.
 func TestReleaseReserveSameCommitRace(t *testing.T) {
 	r := newRepo(t)
 	r.git("commit", "-q", "--allow-empty", "-m", "base")
@@ -323,8 +339,9 @@ func TestReleaseReserveRefusals(t *testing.T) {
 }
 
 // check is the release workflow's gate for a pushed tag: v + SemVer, on
-// the release branch, and a milestone (X.Y.0, or a -pre version) has its
-// CHANGELOG.md section. It prints the version.
+// the release branch, and its CHANGELOG.md section at the tagged commit.
+// A pushed tag is a milestone; a patch is a merge's, which reserve tags.
+// It prints the version.
 func TestReleaseCheck(t *testing.T) {
 	r := newRepo(t)
 	if err := os.WriteFile(filepath.Join(r.dir, "CHANGELOG.md"), []byte(testChangelog), 0o644); err != nil {
@@ -332,6 +349,7 @@ func TestReleaseCheck(t *testing.T) {
 	}
 	r.git("add", "CHANGELOG.md")
 	r.git("commit", "-q", "-m", "base")
+	r.git("tag", "v0.1.0")
 	r.git("tag", "v0.2.0")
 	r.git("tag", "v0.2.1")
 	r.git("tag", "v0.3.0")
@@ -342,12 +360,13 @@ func TestReleaseCheck(t *testing.T) {
 	r.git("tag", "v0.2.2")
 	r.git("checkout", "-q", "main")
 	env := []string{"RELEASE_BRANCH=main"}
-	for tag, want := range map[string]string{"v0.2.0": "0.2.0", "v0.2.1": "0.2.1"} {
+	for tag, want := range map[string]string{"v0.1.0": "0.1.0", "v0.2.0": "0.2.0"} {
 		if got, ok := r.run("", env, "check", tag); !ok || got != want {
 			t.Errorf("check %s = %q, %v; want %q", tag, got, ok, want)
 		}
 	}
 	for tag, why := range map[string]string{
+		"v0.2.1":      "CHANGELOG", // a patch pushed by hand
 		"v0.3.0":      "CHANGELOG", // a milestone without its section
 		"v1.0.0-rc.1": "CHANGELOG",
 		"v0.2.2":      "not on main",
@@ -437,18 +456,61 @@ func TestBuildRefusesBadVersion(t *testing.T) {
 	}
 }
 
-// Only a pushed v* tag publishes: release.yml runs on nothing else, and
-// no other workflow (pull requests, branch pushes, the nightly run) can
-// write to the repository, mint an OIDC token or attest.
-func TestOnlyATagPublishes(t *testing.T) {
+// topLevel returns a top-level key's block in a workflow written in block
+// style: its own line and every line after it up to the next one that
+// starts in column 0, without blank lines, and how many times the key
+// is at the top level.
+func topLevel(data, key string) (string, int) {
+	var block []string
+	n, in := 0, false
+	for _, line := range strings.Split(data, "\n") {
+		switch {
+		case strings.TrimSpace(line) == "":
+			continue
+		case line[0] != ' ' && line[0] != '\t':
+			in = strings.HasPrefix(line, key+":")
+			if in {
+				n++
+			}
+		}
+		if in {
+			block = append(block, line)
+		}
+	}
+	return strings.Join(block, "\n"), n
+}
+
+// A blank line doesn't end a YAML mapping: a key indented after one
+// still belongs to the block, so it can't slip a trigger past the pin.
+func TestTopLevel(t *testing.T) {
+	const wf = "name: x\non:\n  push:\n    branches: [main]\n\n  pull_request:\n\npermissions: {}\njobs:\n  a:\n    on: no\n"
+	if got, n := topLevel(wf, "on"); n != 1 || got != "on:\n  push:\n    branches: [main]\n  pull_request:" {
+		t.Errorf("topLevel(on) = %q, %d", got, n)
+	}
+	if got, n := topLevel(wf, "concurrency"); n != 0 || got != "" {
+		t.Errorf("topLevel(concurrency) = %q, %d", got, n)
+	}
+}
+
+// Only a merge to main (the next patch) and a pushed v* tag (a
+// milestone) publish: release.yml runs on nothing else, not on a pull
+// request or another branch, and no other workflow (pull requests,
+// branch pushes, the nightly run) can write to the repository, mint an
+// OIDC token or attest. release.yml has no run-level concurrency group:
+// a group keeps one pending run and cancels the rest, which drops a
+// merge's release (loomux/server, LOOM-129).
+func TestOnlyMainAndTagsPublish(t *testing.T) {
 	dir := filepath.Join("..", "..", ".github", "workflows")
 	data, err := os.ReadFile(filepath.Join(dir, "release.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	const on = "\non:\n  push:\n    tags: [\"v*\"]\n\n"
-	if !strings.Contains(string(data), on) || strings.Count(string(data), "\non:") != 1 {
-		t.Errorf("release.yml must run only on a v* tag push:%s", on)
+	const want = "on:\n  push:\n    branches: [main]\n    tags: [\"v*\"]"
+	if on, n := topLevel(string(data), "on"); on != want || n != 1 {
+		t.Errorf("release.yml must run only on a push to main or of a v* tag:\n%s\nnot:\n%s", want, on)
+	}
+	if c, n := topLevel(string(data), "concurrency"); n != 0 {
+		t.Errorf("release.yml has a run-level concurrency group, which cancels pending merges' runs:\n%s", c)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -464,7 +526,7 @@ func TestOnlyATagPublishes(t *testing.T) {
 		}
 		for _, perm := range []string{"contents: write", "id-token: write", "attestations: write", "packages: write", "pull-requests: write", "write-all"} {
 			if strings.Contains(string(b), perm) {
-				t.Errorf("%s has %q: only release.yml, on a tag, publishes", e.Name(), perm)
+				t.Errorf("%s has %q: only release.yml, on main or a tag, publishes", e.Name(), perm)
 			}
 		}
 	}
