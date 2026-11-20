@@ -258,7 +258,6 @@ func (a *App) bodyHeight() int {
 func (a *App) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
-	v.WindowTitle = "loomux · " + a.profile
 	switch {
 	case a.width == 0 || a.quitting:
 		return v
