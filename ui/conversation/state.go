@@ -8,7 +8,8 @@ import (
 
 // state is what the server has said about the conversation: the messages
 // loaded so far (the newest page, and the older ones asked for since) and
-// its tasks, dispatches and offers, which every fetch gives complete.
+// its tasks, dispatches and offers, which a fetch of the newest page
+// gives complete.
 // Fetches and the stream's events both change it, and they race: a fetch
 // answers with the conversation as it was when it was asked.
 type state struct {
@@ -39,8 +40,11 @@ func (s *state) applyNewest(c *client.Conversation) {
 // ahead of what is loaded. It reports false, and leaves the messages
 // alone, when before is no longer the cursor of the oldest one loaded:
 // the page belongs to a transcript that has since been replaced.
+//
+// It takes the page's messages only. The page is fetched beside the
+// fetches of the newest page, not in turn with them, so its tasks,
+// dispatches and offers may be older than what those have brought.
 func (s *state) applyOlder(before string, c *client.Conversation) bool {
-	s.applyRest(c)
 	if !s.hasMore || s.nextBefore != before {
 		return false
 	}
