@@ -39,6 +39,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The attach tests run the client in a tmux pane and attach to a
+      # second tmux server (internal/tmuxtest).
+      - name: Install tmux
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+
       # main's newest commit, in this run's go.mod only: its release tag
       # (every server merge gets one), or a pseudo-version while main is
       # ahead of its newest tag. Fetched directly from GitHub, since the
