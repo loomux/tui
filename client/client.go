@@ -182,6 +182,12 @@ func decode(resp *http.Response, ok []int, out any) error {
 		return nil
 	}
 	if len(body) > 0 && !isJSON(resp) {
+		// A 5xx page is a reverse proxy's for a server that's down or
+		// restarting: the status says it. Anything else is a proxy that
+		// stopped the request.
+		if resp.StatusCode >= 500 {
+			return apiError(resp.StatusCode, nil)
+		}
 		return intercepted(resp)
 	}
 	return apiError(resp.StatusCode, body)
@@ -230,7 +236,7 @@ func retryable(err error) bool {
 	}
 	var e *Error
 	if errors.As(err, &e) {
-		return e.Status == http.StatusServiceUnavailable || e.Status == http.StatusBadGateway
+		return e.Status == http.StatusBadGateway || e.Status == http.StatusServiceUnavailable || e.Status == http.StatusGatewayTimeout
 	}
 	var ie *InterceptedError
 	return !errors.As(err, &ie)

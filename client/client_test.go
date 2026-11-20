@@ -208,6 +208,26 @@ func TestProxyInterception(t *testing.T) {
 	}
 }
 
+// A reverse proxy's own error page for a server that's down or
+// restarting is that status, not an interception: a send retries it.
+func TestProxyErrorPageIsTheStatus(t *testing.T) {
+	for _, status := range []int{502, 503, 504} {
+		c := newTest(t, "tok", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(status)
+			io.WriteString(w, "<html>bad gateway</html>")
+		})
+		_, err := c.Version(context.Background())
+		var e *Error
+		if !errors.As(err, &e) || e.Status != status || e.Code != DefaultCode(status) {
+			t.Errorf("%d: err = %v (%T), want *Error with the status", status, err, err)
+		}
+		if !retryable(err) {
+			t.Errorf("%d: not retryable", status)
+		}
+	}
+}
+
 // The client follows no redirect: an https:// server is never left for
 // http://, and the token never goes to another host.
 func TestRedirectsAreNotFollowed(t *testing.T) {
