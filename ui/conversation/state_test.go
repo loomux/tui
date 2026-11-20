@@ -89,6 +89,37 @@ func TestOlderPageThatOverlapsIsNotShownTwice(t *testing.T) {
 	}
 }
 
+// The page of older messages is fetched beside the fetches of the newest
+// page, not in turn with them, so its answer may be the oldest word on
+// the tasks, the dispatches and the offers. It brings messages only.
+func TestOlderPageLeavesTasksAndDispatchesAlone(t *testing.T) {
+	var s state
+	newest := page(true, "m3", userMsg("m3", "d2", "c", 3*time.Minute))
+	newest.Tasks = []client.Task{{ID: "t1", Status: client.TaskNeedsAttention, UpdatedAt: at(3 * time.Minute)}}
+	newest.Dispatches = []client.Dispatch{{DispatchID: "d2", Status: client.DispatchRunning, CreatedAt: at(3 * time.Minute)}}
+	newest.Confirmations = []client.Confirmation{{ID: "c1", Status: "pending"}}
+	s.applyNewest(newest)
+
+	// Asked before the task, the dispatch and the offer existed.
+	older := page(false, "", userMsg("m1", "", "a", time.Minute), userMsg("m2", "", "b", 2*time.Minute))
+	if !s.applyOlder("m3", older) {
+		t.Fatal("applyOlder = false for the page before the oldest message loaded")
+	}
+
+	if got, want := msgIDs(s.messages), []string{"m1", "m2", "m3"}; !slices.Equal(got, want) {
+		t.Errorf("messages = %v, want %v", got, want)
+	}
+	if len(s.tasks) != 1 || s.tasks[0].Status != client.TaskNeedsAttention {
+		t.Errorf("tasks = %+v, want t1 still needing attention", s.tasks)
+	}
+	if len(s.dispatches) != 1 || s.dispatches[0].DispatchID != "d2" {
+		t.Errorf("dispatches = %+v, want d2 still there", s.dispatches)
+	}
+	if len(s.confirmations) != 1 {
+		t.Errorf("confirmations = %+v, want c1 still there", s.confirmations)
+	}
+}
+
 // An older page answers after a refetch replaced the transcript: it is
 // the page before a message that is no longer the oldest one loaded.
 func TestOlderPageForATranscriptSinceReplacedIsDropped(t *testing.T) {
