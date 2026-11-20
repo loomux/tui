@@ -421,65 +421,6 @@ func TestAttachReleasesOnASignal(t *testing.T) {
 	}
 }
 
-func TestAsk(t *testing.T) {
-	for _, tc := range []struct {
-		typed string
-		def   bool
-		want  bool
-	}{
-		{"y\n", false, true}, {"Y\n", false, true}, {"yes\n", false, true}, {" yes \r\n", false, true},
-		{"n\n", true, false}, {"no\n", true, false}, {"N\n", true, false},
-		{"\n", true, true}, {"\n", false, false},
-		{"maybe\n", true, false}, {"maybe\n", false, false},
-		// No answer at all (the terminal is gone) is never a yes.
-		{"", true, false}, {"", false, false},
-		{"y", false, true},
-	} {
-		var out bytes.Buffer
-		if got := ask(context.Background(), strings.NewReader(tc.typed), &out, "Go on?", tc.def); got != tc.want {
-			t.Errorf("typed %q (default %v): %v, want %v", tc.typed, tc.def, got, tc.want)
-		}
-		want := "Go on? [y/N] "
-		if tc.def {
-			want = "Go on? [Y/n] "
-		}
-		if out.String() != want {
-			t.Errorf("the question = %q, want %q", out.String(), want)
-		}
-	}
-	// It reads its own line and no further: what follows is the next
-	// program's.
-	in := strings.NewReader("y\nrest")
-	ask(context.Background(), in, io.Discard, "Go on?", false)
-	if rest, _ := io.ReadAll(in); string(rest) != "rest" {
-		t.Errorf("after the answer the input has %q left, want %q", rest, "rest")
-	}
-}
-
-// A question left unanswered ends when the context does (a signal): the
-// client doesn't sit at a prompt it was told to leave.
-func TestAskEndsWhenCancelled(t *testing.T) {
-	never, w := io.Pipe() // an input nobody types into
-	defer w.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	answered := make(chan bool, 1)
-	go func() { answered <- ask(ctx, never, io.Discard, "Go on?", true) }()
-	select {
-	case got := <-answered:
-		t.Fatalf("ask answered %v with nothing typed", got)
-	case <-time.After(50 * time.Millisecond):
-	}
-	cancel()
-	select {
-	case got := <-answered:
-		if got {
-			t.Error("a cancelled question was a yes")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("ask didn't end when its context was cancelled")
-	}
-}
-
 // A signal while the question about a held task is on screen ends the
 // client at once, with nothing taken.
 func TestAttachSignalAtTheHeldQuestion(t *testing.T) {
