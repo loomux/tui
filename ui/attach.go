@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -70,10 +71,14 @@ type Attach struct {
 // starting is an attach on its way: from the key until the terminal is
 // handed over or a window is open. One at a time.
 type starting struct {
+	// ctx bounds its requests. It is cancelled only when the start has
+	// settled, or when Close has waited long enough: a takeover on its
+	// way is left to finish, because its answer is the only way to learn
+	// the hold to give back.
 	ctx    context.Context
 	cancel context.CancelFunc
-	// cancelled: esc stopped it, and what its last request answers is
-	// only cleaned up.
+	// cancelled: esc stopped it, and what its request in flight answers
+	// is only cleaned up.
 	cancelled bool
 
 	conv  string // the conversation
@@ -171,6 +176,14 @@ func (a *App) startAttach() tea.Cmd {
 	}
 }
 
+// settle ends a start: another may begin.
+func (a *App) settle(st *starting) {
+	if a.starting == st {
+		a.starting = nil
+	}
+	st.cancel()
+}
+
 // attachUpdate handles the attach's own messages.
 func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
@@ -193,14 +206,14 @@ func (a *App) gotTask(msg taskMsg) tea.Cmd {
 	}
 	switch {
 	case st.cancelled:
-		a.starting = nil
+		a.settle(st)
 		return nil
 	case msg.err != nil:
-		a.starting = nil
+		a.settle(st)
 		a.notice = "couldn't attach: " + clean(msg.err.Error())
 		return nil
 	case !msg.ok:
-		a.starting = nil
+		a.settle(st)
 		a.notice = "no agent to attach to: none of this conversation's agents is open"
 		return nil
 	}
@@ -240,14 +253,14 @@ func (a *App) gotWindow(msg windowMsg) tea.Cmd {
 	}
 	switch {
 	case st.cancelled:
-		a.starting = nil
+		a.settle(st)
 		return nil
 	case msg.err != nil:
 		// Not the end of the attach: here, then.
 		st.preface = "couldn't open a tmux window (" + clean(msg.err.Error()) + "): attaching here"
 		return a.take(st)
 	}
-	a.starting = nil
+	a.settle(st)
 	a.notice = "attaching in a new tmux window; it hands the agent back when you detach"
 	return Refresh
 }
@@ -294,7 +307,7 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 		return nil
 	}
 	if st.cancelled {
-		a.starting = nil
+		a.settle(st)
 		return a.giveBack()
 	}
 	if msg.err != nil {
@@ -303,7 +316,7 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 			a.askHeld(st, held.Hold)
 			return nil
 		}
-		a.starting = nil
+		a.settle(st)
 		a.showAttachError(msg.err)
 		return nil
 	}
@@ -351,9 +364,7 @@ func (a *App) askHeld(st *starting, hold *client.Hold) {
 			return a.take(st)
 		},
 		no: func() {
-			if a.starting == st {
-				a.starting = nil
-			}
+			a.settle(st)
 			a.notice = "left with its holder"
 		},
 	}
@@ -390,7 +401,9 @@ func (a *App) showAttachError(err error) {
 }
 
 func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
-	a.starting = nil
+	if st := a.starting; st != nil {
+		a.settle(st)
+	}
 	// A signal while the attach had the terminal ended the attach, which
 	// released the hold on its way out. An interrupt is the person's
 	// ctrl+c at the command (ssh asking for a password): the list is
@@ -429,8 +442,9 @@ func (a *App) attachKey(msg tea.KeyPressMsg) (handled bool, cmd tea.Cmd) {
 	}
 	if st := a.starting; st != nil && !st.cancelled {
 		if act, _, ok := a.keys.Lookup(keymap.ListScreen, msg.String()); ok && act == keymap.Back {
+			// Its request in flight is left to finish (see starting.ctx);
+			// what it answers is cleaned up.
 			st.cancelled = true
-			st.cancel()
 			a.notice = "attach cancelled"
 			return true, nil
 		}
@@ -468,14 +482,37 @@ func (a *App) dialogFooter() string {
 	return faint.Render(fit(" "+bold.Render(key(keymap.Yes))+" take it over  "+bold.Render(key(keymap.No))+" leave it", a.width))
 }
 
-// Close ends what an attach left behind when the screens end: it stops
-// an attach still starting and gives back a hold taken and not yet
-// attached with. Call it once the program has stopped.
+// closeWait is how long Close lets a takeover on its way finish before
+// giving up on it.
+const closeWait = 5 * time.Second
+
+// Close ends what an attach left behind when the screens end, and gives
+// back a hold taken and not yet attached with. Call it once the program
+// has stopped.
+//
+// A takeover on its way to the server is waited for, closeWait at most:
+// its answer is the only way to learn the hold to give back. One still
+// unanswered then is abandoned; a hold it did take ends by itself when
+// its lease runs out.
 func (a *App) Close() {
-	if st := a.starting; st != nil {
-		st.cancel()
+	done := make(chan struct{})
+	go func() {
+		a.work.Wait()
+		close(done)
+	}()
+	wait := time.NewTimer(closeWait)
+	defer wait.Stop()
+	select {
+	case <-done:
+	case <-wait.C:
+		if st := a.starting; st != nil {
+			st.cancel()
+		}
+		<-done
 	}
-	a.work.Wait()
+	if st := a.starting; st != nil {
+		a.settle(st)
+	}
 	if sess := a.held.take(); sess != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()

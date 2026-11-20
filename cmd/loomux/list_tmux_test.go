@@ -5,6 +5,7 @@ package main
 // The screens in a real terminal: the list in a tmux pane, a on its row.
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,5 +122,41 @@ func TestTerminalListAttachWindow(t *testing.T) {
 	}
 	if st := e.srv.Task(e.task.ID).Status; st != registry.TaskStatusAwaitingInput {
 		t.Errorf("status after the detach = %s, want awaiting-input", st)
+	}
+}
+
+// q while the takeover is being answered: the screens end, and the hold
+// the server granted meanwhile is given back before the client exits.
+func TestTerminalListQuitWhileTakingOver(t *testing.T) {
+	e := newAttachEnv(t)
+	answered := make(chan struct{})
+	e.after = func(r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/takeover") {
+			<-answered // the hold is taken; its answer waits
+		}
+	}
+	it := listInTerminal(t, e, "inline")
+	it.terminal.Tmux("send-keys", "-t", "=terminal:", "a")
+	deadline := time.Now().Add(15 * time.Second)
+	for e.srv.ActiveHold(e.task.ID) == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("no takeover reached the server")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	it.terminal.Tmux("send-keys", "-t", "=terminal:", "q")
+	time.Sleep(200 * time.Millisecond) // the screens have ended; the client waits for the answer
+	close(answered)
+	if code := it.exit(); code != 0 {
+		t.Errorf("exit %d, want 0", code)
+	}
+	if h := e.srv.ActiveHold(e.task.ID); h != nil {
+		t.Errorf("the client exited with its hold: %+v", h)
+	}
+	if st := e.srv.Task(e.task.ID).Status; st != registry.TaskStatusAwaitingInput {
+		t.Errorf("status = %s, want it handed back", st)
+	}
+	if it.agent.Clients(agentSession) != 0 {
+		t.Error("the attach command ran after the screens quit")
 	}
 }

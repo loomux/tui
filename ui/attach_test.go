@@ -522,16 +522,66 @@ func (w *attachWorld) feedOne() {
 	w.send(msg)
 }
 
-// a again while an attach is starting changes nothing.
+// a again while an attach is starting changes nothing: one takeover,
+// one command.
 func TestAttachTwice(t *testing.T) {
+	for _, when := range []string{"while the task is looked up", "while the takeover's answer waits"} {
+		w := newAttachWorld(t, "inline", false)
+		w.ssh("echo ran >> " + w.file("runs"))
+		var takeovers atomic.Int32
+		count := func(r *http.Request) int {
+			if strings.HasSuffix(r.URL.Path, "/takeover") {
+				takeovers.Add(1)
+			}
+			return 0
+		}
+		w.refuse.Store(&count)
+		w.send(keyPress("a"))
+		if when == "while the takeover's answer waits" {
+			w.feedOne() // the task: the takeover runs, its answer waits
+		}
+		w.send(keyPress("a"))
+		w.flush()
+		runs, _ := os.ReadFile(w.file("runs"))
+		if string(runs) != "ran\n" || takeovers.Load() != 1 {
+			t.Errorf("a again %s: the command ran %q after %d takeovers, want once each", when, runs, takeovers.Load())
+		}
+		if h := w.srv.ActiveHold(w.task.ID); h != nil {
+			t.Errorf("a again %s: still held: %+v", when, h)
+		}
+	}
+}
+
+// esc doesn't abort a takeover on its way to the server: its answer is
+// the only way to learn the hold to give back. The request is left to
+// finish.
+func TestAttachCancelLetsTheTakeoverFinish(t *testing.T) {
 	w := newAttachWorld(t, "inline", false)
-	w.ssh("echo ran >> " + w.file("runs"))
+	w.ssh("touch " + w.file("ran"))
 	w.send(keyPress("a"))
+	w.send(keyPress("esc")) // before the takeover is even sent
+	w.flush()               // the task's answer: dropped, nothing taken
+	if h := w.srv.ActiveHold(w.task.ID); h != nil {
+		t.Fatalf("a takeover was sent for a cancelled attach: %+v", h)
+	}
+	// A new attach may start once the cancelled one has settled.
+	w.key("a")
+	if !w.ran("ran") {
+		t.Errorf("a new attach after the cancel didn't run:\n%s", w.frame())
+	}
+
+	w = newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
 	w.send(keyPress("a"))
+	st := w.app.starting
+	w.feedOne()
+	w.send(keyPress("esc"))
+	if st.ctx.Err() != nil {
+		t.Error("esc cancelled the context of a takeover that may be on its way")
+	}
 	w.flush()
-	runs, _ := os.ReadFile(w.file("runs"))
-	if string(runs) != "ran\n" {
-		t.Errorf("the command ran %q, want once", runs)
+	if h := w.srv.ActiveHold(w.task.ID); h != nil {
+		t.Errorf("the hold wasn't given back: %+v", h)
 	}
 }
 

@@ -37,8 +37,11 @@ type attachEnv struct {
 	token string
 	bin   string
 	// front is the server URL in the config: a handler in front of the
-	// server that refuse, when set, may answer first.
+	// server that refuse, when set, may answer first, and that calls
+	// after, when set, once the server has handled a request and before
+	// its answer goes out.
 	refuse func(*http.Request) int
+	after  func(*http.Request)
 }
 
 func newAttachEnv(t *testing.T, opts ...apitest.Option) *attachEnv {
@@ -58,6 +61,9 @@ func newAttachEnv(t *testing.T, opts ...apitest.Option) *attachEnv {
 			}
 		}
 		e.srv.API.ServeHTTP(w, r)
+		if e.after != nil {
+			e.after(r)
+		}
 	}))
 	t.Cleanup(front.Close)
 
