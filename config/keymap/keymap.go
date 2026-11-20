@@ -380,10 +380,14 @@ var named = map[string]string{
 
 var modifiers = []string{"ctrl", "alt", "shift"}
 
+var ctrlAliases = map[string]string{"i": "tab", "m": "enter", "[": "esc"}
+
 // Canonical returns a key's one spelling: modifiers lower case, in the
 // order ctrl, alt, shift, joined by "+"; a named key lower case; a
 // character as itself, except under ctrl, where a letter is lower case
-// (terminals can't tell ctrl+s from ctrl+S). " " is space.
+// (terminals can't tell ctrl+s from ctrl+S) and ctrl+i, ctrl+m and
+// ctrl+[ are tab, enter and esc (a terminal sends them as those). " " is
+// space.
 func Canonical(key string) (string, error) {
 	if key == " " {
 		return "space", nil
@@ -426,6 +430,12 @@ func Canonical(key string) (string, error) {
 		base = rest
 		if has["ctrl"] {
 			base = string(unicode.ToLower(r))
+			// A terminal sends ctrl+i, ctrl+m and ctrl+[ as the bytes
+			// of tab, enter and esc, and Bubble Tea names them so.
+			if alias, ok := ctrlAliases[base]; ok {
+				has["ctrl"] = false
+				base = alias
+			}
 		}
 	} else {
 		return "", fmt.Errorf("%q isn't a key: write a character (a, A, ?), a named key (enter, esc, tab, space, up, pgdown, f1, …) or modifiers before one (ctrl+s, alt+enter, shift+tab)", key)

@@ -237,6 +237,12 @@ func TestCanonical(t *testing.T) {
 		"f5":          "f5",
 		"F12":         "f12",
 		"ctrl+alt+up": "ctrl+alt+up",
+		// A terminal sends these as tab, enter and esc.
+		"ctrl+i":     "tab",
+		"ctrl+I":     "tab",
+		"ctrl+m":     "enter",
+		"ctrl+[":     "esc",
+		"alt+ctrl+i": "alt+tab",
 	}
 	for in, want := range ok {
 		got, err := Canonical(in)
@@ -248,6 +254,18 @@ func TestCanonical(t *testing.T) {
 		if got, err := Canonical(bad); err == nil {
 			t.Errorf("Canonical(%q) = %q, want an error", bad, got)
 		}
+	}
+}
+
+// A control-key alias of a named key clashes with it.
+func TestAliasClash(t *testing.T) {
+	_, err := New(map[string][]string{"newline": {"ctrl+m"}})
+	if err == nil || !strings.Contains(err.Error(), `"enter" is both send and newline`) {
+		t.Errorf("newline = ctrl+m: %v, want a clash with send on enter", err)
+	}
+	m := Default()
+	if a, _, ok := m.Lookup(ListScreen, "ctrl+i"); !ok || a != NextGroup {
+		t.Errorf(`"ctrl+i" on the list = %q, %v; want next_group (tab)`, a, ok)
 	}
 }
 
