@@ -86,7 +86,8 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 		gen := a.gen
 		cmds = append(cmds, a.tick(pollEvery, func(time.Time) tea.Msg { return pollMsg{gen} }))
 	}
-	if msg.err == nil && a.lacksName(msg.page.Conversations) && !a.namesBusy && a.now().Sub(a.namesAt) >= namesEvery {
+	if since := a.now().Sub(a.namesAt); msg.err == nil && !a.namesBusy &&
+		(since >= namesStale || since >= namesEvery && a.lacksName(msg.page.Conversations)) {
 		cmds = append(cmds, a.fetchNames())
 	}
 	return tea.Batch(cmds...)

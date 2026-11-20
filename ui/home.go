@@ -149,20 +149,23 @@ var emptyGroup = map[group]string{
 }
 
 // scroll keeps the cursor's row on screen, with its section's title when
-// it's the section's first row.
+// it's the section's first row, and on the last row, the notes after it.
 func (h *home) scroll(height int) {
 	lines := h.lines()
 	at := slices.IndexFunc(lines, func(l line) bool { return l.kind == rowLine && l.item == h.cursor })
 	if at >= 0 {
-		top := at
+		top, bottom := at, at
 		if top > 0 && lines[top-1].kind == titleLine {
 			top--
+		}
+		if h.cursor == len(h.visible)-1 {
+			bottom = len(lines) - 1
 		}
 		if top < h.offset {
 			h.offset = top
 		}
-		if at >= h.offset+height {
-			h.offset = at - height + 1
+		if bottom >= h.offset+height {
+			h.offset = min(bottom-height+1, at) // never past the cursor
 		}
 	}
 	h.offset = max(0, min(h.offset, len(lines)-height))

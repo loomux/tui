@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -856,5 +857,51 @@ func TestFilterNoMatchInAGroup(t *testing.T) {
 	f := h.frame()
 	if !strings.Contains(f, "RUNNING (0)") || !strings.Contains(f, `no conversation matches "kubectl"`) {
 		t.Errorf("running, filtered on kubectl:\n%s", f)
+	}
+}
+
+// On a list longer than the screen, the note that older conversations
+// aren't shown is reached at the bottom (codex review).
+func TestHasMoreReachedAtTheBottom(t *testing.T) {
+	var rows []client.ConversationSummary
+	for i := range 30 {
+		rows = append(rows, client.ConversationSummary{ConversationID: fmt.Sprintf("c%02d", i), Status: client.TaskCompleted, Preview: "row", UpdatedAt: t0.Add(-time.Duration(i) * time.Minute)})
+	}
+	h := newHarness(t, &fakeAPI{page: &client.ConversationPage{Conversations: rows, HasMore: true}}, 80, 15)
+	h.flush()
+	h.key("G")
+	lines := h.lines()
+	if f := h.frame(); !strings.Contains(lines[len(lines)-2], "only the newest 100") || !strings.Contains(lines[1], "row") {
+		t.Errorf("at the bottom of a long list, a full page ending with the note:\n%s", f)
+	}
+	if h.selected() != "c29" {
+		t.Errorf("on %q, want the last row", h.selected())
+	}
+}
+
+// Names are refetched every 5 minutes even when every row has one, so a
+// renamed workspace doesn't keep its old name (codex review).
+func TestWorkspaceNamesRefreshed(t *testing.T) {
+	page := samplePage()
+	page.Conversations = page.Conversations[:1] // conv-run, in loomux-web: every name is known
+	api := &fakeAPI{page: page, workspaces: sampleWorkspaces()}
+	h := newHarness(t, api, 80, 24)
+	ticks := h.flush()
+	for range 3 {
+		h.now = h.now.Add(time.Minute)
+		h.send(ticks[0].msg)
+		ticks = h.flush()
+	}
+	if _, ws := api.calls(); ws != 1 {
+		t.Fatalf("Workspaces calls = %d with every name known, want 1", ws)
+	}
+	api.mu.Lock()
+	api.workspaces[3].Name = "web-renamed"
+	api.mu.Unlock()
+	h.now = h.now.Add(2 * time.Minute)
+	h.send(ticks[0].msg)
+	h.flush()
+	if _, ws := api.calls(); ws != 2 || !strings.Contains(h.frame(), "web-renamed") {
+		t.Errorf("5 minutes on: Workspaces calls = %d, frame:\n%s", ws, h.frame())
 	}
 }

@@ -42,6 +42,7 @@ const (
 	pollEvery      = 5 * time.Second  // the design's list polling
 	pollLimit      = 100              // GET /conversations?limit=100
 	namesEvery     = time.Minute      // at most one GET /workspaces a minute for a name the list lacks
+	namesStale     = 5 * time.Minute  // and one every 5 minutes anyway, for a renamed workspace
 	requestTimeout = 15 * time.Second // one poll's limit
 	minWidth       = 60               // under 60×15 the screen asks for more room
 	minHeight      = 15
