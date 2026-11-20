@@ -15,7 +15,7 @@ the web client.
 
 **Pre-release, not usable yet.** So far there is `loomux version`, plus
 the config file, the token stores that `loomux login` will use, the
-keymap and the list of conversations. Logging in, chat and attach are
+keymap, the list of conversations and `loomux open`. Logging in, chat and attach are
 added ticket by ticket, following the build plan in the design.
 
 ## Design
@@ -67,7 +67,16 @@ workspace, the first message and how long ago it last changed.
   all again.
 - `/` filters as you type: every word must be in the row's message,
   workspace or status. `enter` keeps the filter, `esc` clears it.
+- `o` opens the conversation in the browser. Over ssh, or with no
+  display, the list shows the link to copy instead.
+- A conversation driven from another terminal shows `⌨ held:` and that
+  terminal's name. `T` takes it back: the server detaches that terminal,
+  and the task takes messages again.
 - `?` shows the keys in effect.
+
+`loomux open ID` starts the list on that conversation: the command the
+web shows next to a conversation. `--profile` works with it as it does
+without a command.
 
 The list polls the server every 5 seconds. It needs a token stored for
 the profile, which `loomux login` will store.
