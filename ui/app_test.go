@@ -31,6 +31,14 @@ type fakeAPI struct {
 	wsErr      error
 	limits     []int
 	wsCalls    int
+
+	// GET /conversations/{id} and POST /tasks/{id}/release (take back).
+	convs      map[string]*client.Conversation
+	convErr    error
+	convAsked  []string
+	releaseErr error
+	released   []string // task ids, in order
+	releasedAs []string // the hold ids sent
 }
 
 func (f *fakeAPI) Conversations(_ context.Context, limit int) (*client.ConversationPage, error) {
@@ -74,6 +82,8 @@ type harness struct {
 	api *fakeAPI
 	now time.Time
 	out []tea.Msg
+	// browsed are the links opened in the browser.
+	browsed []string
 }
 
 func newHarness(t *testing.T, api *fakeAPI, width, height int) *harness {
@@ -83,8 +93,22 @@ func newHarness(t *testing.T, api *fakeAPI, width, height int) *harness {
 
 func newHarnessKeys(t *testing.T, api *fakeAPI, width, height int, keys *keymap.Map) *harness {
 	t.Helper()
+	return newHarnessOpts(t, api, width, height, Options{Keys: keys})
+}
+
+// newHarnessOpts starts the app with o, its profile, API and clock the
+// harness's. The browser is a recorder (browsed) unless o has one.
+func newHarnessOpts(t *testing.T, api *fakeAPI, width, height int, o Options) *harness {
+	t.Helper()
 	h := &harness{t: t, api: api, now: t0}
-	h.app = New(Options{Profile: "test", API: api, Keys: keys, Now: func() time.Time { return h.now }})
+	o.Profile, o.API, o.Now = "test", api, func() time.Time { return h.now }
+	if o.Browse == nil {
+		o.Browse = func(link string) error {
+			h.browsed = append(h.browsed, link)
+			return nil
+		}
+	}
+	h.app = New(o)
 	h.app.tick = func(d time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
 		return func() tea.Msg { return firedTick{d, fn(h.now.Add(d))} }
 	}
@@ -686,7 +710,6 @@ func TestActionsNotYetHere(t *testing.T) {
 		"n":     "starting a conversation",
 		"a":     "attaching",
 		"w":     "watching",
-		"o":     "opening it in the browser",
 	} {
 		h := loaded(t, 80, 24)
 		h.key(k)
@@ -785,6 +808,8 @@ func TestBubbleTeaKeysMatchTheKeymap(t *testing.T) {
 		{tea.KeyPressMsg{Code: '/', Text: "/"}, keymap.ListScreen, keymap.Filter},
 		{tea.KeyPressMsg{Code: '?', Text: "?"}, keymap.ListScreen, keymap.Help},
 		{tea.KeyPressMsg{Code: tea.KeyEnter}, keymap.FilterScreen, keymap.Apply},
+		{tea.KeyPressMsg{Code: 'o', Text: "o"}, keymap.ListScreen, keymap.Browser},
+		{tea.KeyPressMsg{Code: 't', ShiftedCode: 'T', Text: "T", Mod: tea.ModShift}, keymap.ListScreen, keymap.TakeBack},
 		{tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt}, keymap.ComposerScreen, keymap.Newline},
 		{tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, keymap.ComposerScreen, keymap.Cancel},
 	} {

@@ -32,15 +32,11 @@ func newItem(r client.ConversationSummary, names map[string]string) item {
 // status is a row's glyph and words: who holds it, then a pending
 // offer, then its status.
 func status(r client.ConversationSummary) (string, string) {
-	if h := r.HeldBy; h != nil {
-		who := clean(h.ClientLabel)
-		if who == "" {
-			who = clean(h.ClientKind)
+	if r.HeldBy != nil {
+		if who := holderName(r.HeldBy); who != "" {
+			return "⌨", "held: " + who
 		}
-		if who == "" {
-			return "⌨", "held"
-		}
-		return "⌨", "held: " + who
+		return "⌨", "held"
 	}
 	if r.PendingConfirmationID != "" {
 		return "?", "offer"
@@ -60,6 +56,18 @@ func status(r client.ConversationSummary) (string, string) {
 		return "✗", "failed"
 	}
 	return "·", strings.ReplaceAll(clean(r.Status), "_", " ")
+}
+
+// holderName names who holds a conversation: the client's label, else
+// its kind, else "".
+func holderName(h *client.Holder) string {
+	if h == nil {
+		return ""
+	}
+	if who := clean(h.ClientLabel); who != "" {
+		return who
+	}
+	return clean(h.ClientKind)
 }
 
 // workspaceName is a workspace's name, the start of its id while the
