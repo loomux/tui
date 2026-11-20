@@ -251,6 +251,11 @@ func (s *Session) Run(ctx context.Context, t Terminal) (Result, error) {
 	var res Result
 	commands := s.Plan.Commands
 	for i, c := range commands {
+		// Cancelled, or the hold gone, before the command got the
+		// terminal: it doesn't get it.
+		if ctx.Err() != nil || s.beat.goneErr() != nil {
+			break
+		}
 		t.say("%s", s.attachingLine(c))
 		a, how := s.attempt(ctx, c, t)
 		res.Attempts = append(res.Attempts, a)
@@ -444,7 +449,8 @@ const (
 // detached this terminal.
 type EndedError struct {
 	// Reason is the hold's ended_reason: expired, taken_back, taken_over,
-	// session_revoked, task_ended, or one a later server adds.
+	// session_revoked, task_ended, released (by another terminal of this
+	// session, which shares its hold), or one a later server adds.
 	Reason string
 	// At is when, zero if the server didn't say.
 	At time.Time
@@ -456,6 +462,9 @@ func (e *EndedError) Error() string {
 		at = " at " + e.At.Local().Format("15:04")
 	}
 	switch e.Reason {
+	case endedReleased:
+		// A session's terminals share its hold: another one released it.
+		return "this session's hold was released from another terminal" + at + "; the attach was ended"
 	case endedExpired:
 		return "your hold expired" + at + "; the session was detached"
 	case endedTakenBack:

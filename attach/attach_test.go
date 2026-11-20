@@ -672,6 +672,66 @@ func TestRunCancelled(t *testing.T) {
 	}
 }
 
+// Cancelled before the command started (a signal while the takeover was
+// answered): nothing is run, and the hold is released.
+func TestRunAlreadyCancelled(t *testing.T) {
+	w := newWorld(t)
+	w.program("ssh", "touch "+w.file("ran"))
+	s, err := take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, cancel := context.WithCancel(ctx(t))
+	cancel()
+	res, err := s.Run(c, Terminal{})
+	if !errors.Is(err, context.Canceled) || len(res.Attempts) != 0 || res.Attached {
+		t.Errorf("Run = %+v, %v; want nothing run and context.Canceled", res, err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if exists(w.file("ran"))() {
+		t.Error("the command ran after the cancel")
+	}
+	if h := w.srv.ActiveHold(w.task.ID); h != nil {
+		t.Errorf("still held: %+v", h)
+	}
+}
+
+// Two terminals of one session share its hold (a takeover by the session
+// that holds the task gets that hold back). When one detaches and
+// releases it, the other's attach is ended too: nobody stays in a pane
+// that automation may type into again.
+func TestRunEndsWhenTheSessionsHoldIsReleasedElsewhere(t *testing.T) {
+	w := newWorld(t)
+	w.program("ssh", "touch "+w.file("started")+"; exec sleep 60")
+	first, err := take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Hold.ID != first.Hold.ID {
+		t.Fatalf("the session's second takeover got hold %s, want its own %s back", second.Hold.ID, first.Hold.ID)
+	}
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		waitFor(t, "the command to start", exists(w.file("started")))
+		if err := first.Release(ctx(t)); err != nil {
+			t.Errorf("the first terminal's release: %v", err)
+		}
+	}()
+	_, err = second.Run(ctx(t), Terminal{})
+	<-released
+	if !isEnded(err, "released") {
+		t.Fatalf("err = %#v, want an EndedError for released", err)
+	}
+	if !strings.Contains(err.Error(), "another terminal") {
+		t.Errorf("message = %q", err)
+	}
+}
+
 // A command that ignores the hangup is killed.
 func TestRunKillsACommandThatWontEnd(t *testing.T) {
 	w := newWorld(t)
@@ -834,6 +894,7 @@ func TestEndedErrorMessages(t *testing.T) {
 		"taken_over":      "another session took the task over at 14:31; the session was detached",
 		"session_revoked": "this session was signed out at 14:31; the session was detached. Sign in again with loomux login",
 		"task_ended":      "the task ended at 14:31",
+		"released":        "this session's hold was released from another terminal at 14:31; the attach was ended",
 		"something_new":   "your hold ended at 14:31 (something_new)",
 	} {
 		if got := (&EndedError{Reason: reason, At: at}).Error(); got != want {

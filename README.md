@@ -15,8 +15,9 @@ the web client.
 
 **Pre-release, not usable yet.** So far there is `loomux version`, plus
 the config file, the token stores that `loomux login` will use and the
-keymap the screens will use. Logging
-in, the list, chat and attach are added ticket by ticket, following the
+keymap the screens will use. `loomux attach` attaches a terminal to an
+agent, for a profile that already has a stored token. Logging
+in, the list and chat are added ticket by ticket, following the
 build plan in the design.
 
 ## Design
@@ -140,6 +141,69 @@ in effect on the current screen.
 | `newline` | `alt+enter` | composer | new line |
 | `help` | `?` | list, conversation, transcript, help | help |
 | `quit` | `q` | list, conversation, transcript, help | quit |
+
+## Attaching to an agent
+
+`loomux attach` attaches this terminal to a conversation's agent: its own
+Claude Code or Codex screen, in its tmux session on the machine it runs
+on.
+
+```sh
+loomux attach CONVERSATION     # the conversation's open agent
+loomux attach --task TASK      # a task by its id
+```
+
+Detach with tmux's own `prefix d` (`C-b d` by default). Inside your own
+tmux, press the prefix twice so it reaches the agent's tmux: `C-b C-b d`.
+The agent keeps running, and Loomux has it back.
+
+- **Always under a hold.** Before it attaches, `loomux` takes a hold on
+  the task. The server then knows who is in the pane: the other clients
+  show it, and nothing automated types into the pane meanwhile. `loomux`
+  renews the hold every 15 seconds and releases it when the attach
+  command ends, also when a signal ends it. If `loomux` itself is killed,
+  the hold runs out within 45 seconds and the server detaches the
+  session; on Linux the attach command is hung up at once as well.
+- **A working agent.** Attaching to an agent in the middle of a turn ends
+  that turn for Loomux. What the agent finishes reaches the conversation
+  once you have detached.
+- **The command comes from the server:** `kubectl exec` or `docker exec`
+  for a machine a plugin made, `ssh` for a remote host, `tmux` itself for
+  a target on the server's own machine. `loomux` runs the first whose
+  program is on your `PATH`, as it is and never through a shell. So you
+  need what that command needs: your key on the host, a kubeconfig with
+  exec rights, or access to the Docker engine. If the command fails at
+  once (a non-zero exit within 2 seconds, or ssh's 255), `loomux` asks
+  whether to try the next one.
+- **Held by another client.** `loomux` says who has the task and asks
+  before taking it, because that detaches them. `--force` takes it
+  without asking.
+- **A hold that ends another way.** When the task is taken back from the
+  web, taken over from another terminal, or the hold runs out, `loomux`
+  ends the attach and says which: `your hold expired at 14:31; the
+  session was detached`.
+- **Nothing to run.** If this machine can run none of the server's
+  commands, `loomux` takes nothing and shows them with the reason. A
+  server from before holds can't attach yet: `loomux` shows its command
+  as text, to run by hand, and never runs it itself.
+
+`[attach]` in the config file chooses among the server's commands:
+
+```toml
+[attach]
+prefer = ["ssh", "kubectl"]  # the ways in to use, the most preferred first
+
+[attach.kubectl]
+context = "my-cluster"       # adds --context to a kubectl command
+```
+
+Without `prefer`, every way in the server gives is tried in the server's
+order: the plugin's first, then ssh. With it, a way it leaves out isn't
+used.
+
+`loomux attach` exits 0 when you were attached and the hold was released,
+128 plus the signal's number when a signal ended it, 2 for a usage error
+and 1 for anything else.
 
 ## License
 
