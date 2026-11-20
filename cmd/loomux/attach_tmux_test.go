@@ -1,3 +1,5 @@
+//go:build unix
+
 package main
 
 // The design's attach tests ("Testing" → Attach): the client in a real

@@ -1,3 +1,5 @@
+//go:build unix
+
 package attach
 
 // The attach routine against a real api.Server from the pinned server
@@ -440,6 +442,28 @@ func TestRunFailFastWindow(t *testing.T) {
 		t.Errorf("ssh's 255 after the window: %+v, %v; want the next command tried", res, err)
 	}
 
+	// With no other way in, an ssh that was up for a while and then lost
+	// its connection is how the session ended, not a failure to attach.
+	s, err = take(ctx(t), w.api, w.task.ID, Options{}, short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Plan.Commands = []Command{w.program("ssh", "sleep 0.3; exit 255")}
+	res, err = s.Run(ctx(t), Terminal{})
+	if err != nil || !res.Attached {
+		t.Errorf("ssh's 255 after the window, with nothing else to try: %+v, %v; want it attached and no error", res, err)
+	}
+	// Within the window it is a failure like any other.
+	s, err = take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Plan.Commands = []Command{w.program("ssh", "exit 255")}
+	var failed *FailedError
+	if res, err = s.Run(ctx(t), Terminal{}); !errors.As(err, &failed) || res.Attached {
+		t.Errorf("ssh's 255 at once: %+v, %v; want a FailedError", res, err)
+	}
+
 	s, err = take(ctx(t), w.api, w.task.ID, Options{}, short)
 	if err != nil {
 		t.Fatal(err)
@@ -729,6 +753,69 @@ func TestRunEndsWhenTheSessionsHoldIsReleasedElsewhere(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "another terminal") {
 		t.Errorf("message = %q", err)
+	}
+}
+
+// A session is one attach: once its hold is released, Run runs nothing.
+// A command never runs without a hold.
+func TestRunAfterTheReleaseRunsNothing(t *testing.T) {
+	w := newWorld(t)
+	w.program("ssh", "echo ran >> "+w.file("runs"))
+	s, err := take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Run(ctx(t), Terminal{}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Run(ctx(t), Terminal{})
+	if err == nil || len(res.Attempts) != 0 {
+		t.Errorf("a second Run = %+v, %v; want an error and nothing run", res, err)
+	}
+
+	s, err = take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Release(ctx(t)); err != nil {
+		t.Fatal(err)
+	}
+	res, err = s.Run(ctx(t), Terminal{})
+	if err == nil || len(res.Attempts) != 0 {
+		t.Errorf("Run after Release = %+v, %v; want an error and nothing run", res, err)
+	}
+	if got := readFile(t, w.file("runs")); got != "ran\n" {
+		t.Errorf("the command ran %q, want once", got)
+	}
+}
+
+// Released while a command has the terminal: the command is ended.
+func TestReleaseDuringRunEndsTheCommand(t *testing.T) {
+	w := newWorld(t)
+	w.program("ssh", "touch "+w.file("started")+"; exec sleep 60")
+	s, err := take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		waitFor(t, "the command to start", exists(w.file("started")))
+		if err := s.Release(ctx(t)); err != nil {
+			t.Errorf("Release: %v", err)
+		}
+	}()
+	start := time.Now()
+	res, err := s.Run(ctx(t), Terminal{})
+	<-released
+	if err != nil || !res.Attached {
+		t.Errorf("Run = %+v, %v", res, err)
+	}
+	if time.Since(start) > 20*time.Second {
+		t.Errorf("Run took %s: the command wasn't ended", time.Since(start))
+	}
+	if h := w.srv.ActiveHold(w.task.ID); h != nil {
+		t.Errorf("still held: %+v", h)
 	}
 }
 

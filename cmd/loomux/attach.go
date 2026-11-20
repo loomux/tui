@@ -99,7 +99,7 @@ func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdo
 		// Another session has the task: taking it detaches that client,
 		// so it is the person's call.
 		fmt.Fprintln(stderr, heldLine(held.Hold))
-		if !ask(stdin, stderr, "Take it over? That client is detached.", false) {
+		if !ask(ctx, stdin, stderr, "Take it over? That client is detached.", false) {
 			return errors.New("left with its holder: nothing was taken")
 		}
 		opts.Force = true
@@ -110,8 +110,8 @@ func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdo
 	}
 
 	res, err := sess.Run(ctx, attach.Terminal{In: stdin, Out: stdout, Err: stderr,
-		Offer: func(_ context.Context, _ attach.Attempt, next attach.Command) bool {
-			return ask(stdin, stderr, fmt.Sprintf("Try %s (%s)?", next.Via, next), true)
+		Offer: func(ctx context.Context, _ attach.Attempt, next attach.Command) bool {
+			return ask(ctx, stdin, stderr, fmt.Sprintf("Try %s (%s)?", next.Via, next), true)
 		}})
 	if err != nil {
 		return err
@@ -231,14 +231,30 @@ func explain(stderr io.Writer, err error) {
 
 // ask puts a yes/no question and reads one line of answer: y or yes,
 // n or no, or nothing for def. Anything else is a no, and so is no
-// answer at all (the input is gone). It reads its line and nothing after
-// it: the rest is the next command's.
-func ask(in io.Reader, out io.Writer, question string, def bool) bool {
+// answer at all: the input is gone, or ctx was cancelled (a signal)
+// while the question stood. It reads its line and nothing after it: the
+// rest is the next command's.
+func ask(ctx context.Context, in io.Reader, out io.Writer, question string, def bool) bool {
 	hint := " [y/N] "
 	if def {
 		hint = " [Y/n] "
 	}
 	fmt.Fprint(out, question+hint)
+	// A read of a terminal can't be interrupted, so it gets a goroutine
+	// of its own, left behind if ctx ends first: the client is then on
+	// its way out.
+	answer := make(chan bool, 1)
+	go func() { answer <- readAnswer(in, def) }()
+	select {
+	case yes := <-answer:
+		return yes
+	case <-ctx.Done():
+		fmt.Fprintln(out)
+		return false
+	}
+}
+
+func readAnswer(in io.Reader, def bool) bool {
 	var line []byte
 	for b := make([]byte, 1); ; {
 		n, err := in.Read(b)
