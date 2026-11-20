@@ -127,6 +127,18 @@ func TestMarkdownKeepsEveryCharacterOfATextThatCannotWrap(t *testing.T) {
 	}
 }
 
+// Markdown isn't laid out narrower than ten columns, but what is narrower
+// still gets every character: the lines continue, they aren't cut.
+func TestMarkdownNarrowerThanItsLayoutIsContinuedNotCut(t *testing.T) {
+	md := newMarkdown()
+	out := md.render("one two three four five six seven", 6)
+
+	checkWidth(t, out, 6)
+	if got := strings.Join(strings.Fields(strings.Join(plain(out), " ")), ""); got != "onetwothreefourfivesixseven" {
+		t.Errorf("at width 6 the text shown is %q, want every character of it", got)
+	}
+}
+
 // A code line is never cut at the width: what doesn't fit continues on
 // the next line.
 func TestMarkdownKeepsEveryCharacterOfALongCodeLine(t *testing.T) {

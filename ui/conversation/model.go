@@ -388,8 +388,12 @@ func (m *Model) onEvent(ev client.StreamEvent) tea.Cmd {
 		m.connected, m.down, m.reconnecting = true, false, false
 		// Nothing added before the stream opened is replayed: not what
 		// came between the first fetch and the first connect, and not
-		// what came during a drop.
-		return m.fetch()
+		// what came during a drop. That goes for the turns of an open
+		// transcript too.
+		if m.tr != nil {
+			turns = m.fetchTurns()
+		}
+		return tea.Batch(turns, m.fetch())
 	case client.EventDisconnected:
 		if m.down {
 			return nil // a retry that failed: the same drop

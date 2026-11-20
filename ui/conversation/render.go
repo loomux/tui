@@ -46,15 +46,16 @@ func wrap(s string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// minMarkdownWidth is the narrowest markdown is laid out at.
+// minMarkdownWidth is the narrowest markdown is laid out at. In less
+// room its lines are continued, not cut.
 const minMarkdownWidth = 10
 
 // markdown renders messages as markdown (Glamour), for a dark or a light
 // background. It keeps one renderer for the width in use.
 type markdown struct {
-	dark  bool
-	width int
-	r     *glamour.TermRenderer
+	dark   bool
+	layout int // the width r wraps at
+	r      *glamour.TermRenderer
 }
 
 func newMarkdown() *markdown { return &markdown{dark: true} }
@@ -75,14 +76,15 @@ var padding = regexp.MustCompile(`(?:\x1b\[[0-9;]*m *\x1b\[0?m| )+$`)
 // too wide (a heading of one long word) continued on the next rather
 // than cut. Text that can't be rendered is shown as it is.
 func (md *markdown) render(text string, width int) string {
-	width = max(width, minMarkdownWidth)
+	width = max(width, 1)
+	layout := max(width, minMarkdownWidth)
 	text = clean(text)
-	if md.r == nil || md.width != width {
-		r, err := glamour.NewTermRenderer(glamour.WithStyles(md.style()), glamour.WithWordWrap(width))
+	if md.r == nil || md.layout != layout {
+		r, err := glamour.NewTermRenderer(glamour.WithStyles(md.style()), glamour.WithWordWrap(layout))
 		if err != nil {
 			return wrap(text, width)
 		}
-		md.r, md.width = r, width
+		md.r, md.layout = r, layout
 	}
 	out, err := md.r.Render(text)
 	if err != nil {

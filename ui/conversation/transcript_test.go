@@ -257,6 +257,24 @@ func TestAnOpenTranscriptFollowsItsTask(t *testing.T) {
 	}
 }
 
+// The stream replays nothing: a turn that ended while it was down is
+// only found by fetching the transcript again when it is back.
+func TestAnOpenTranscriptIsFetchedAgainWhenTheStreamReconnects(t *testing.T) {
+	tr := turns()
+	h := withTurns(t, tr)
+	h.key("p")
+	before := len(h.api.turnsCalls)
+
+	h.event(client.StreamEvent{Type: client.EventDisconnected, Err: errors.New("eof"), RetryIn: time.Second})
+	tr.Turns = append(tr.Turns, client.Turn{ID: "u3", UserMessage: "ship it", AgentMessage: "Shipped while the stream was down.", Pane: "$ git push", CreatedAt: at(9 * time.Minute)})
+	h.event(client.StreamEvent{Type: client.EventConnected, Reconnected: true})
+
+	if got := len(h.api.turnsCalls) - before; got != 1 {
+		t.Errorf("%d transcript fetches after the reconnect, want 1", got)
+	}
+	h.has("Shipped while the stream was down.")
+}
+
 // A transcript's answer may arrive after it was left, or after another
 // was opened: it isn't the one on screen.
 func TestAnAnswerForATranscriptNoLongerShownIsDropped(t *testing.T) {
