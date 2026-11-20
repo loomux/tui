@@ -197,6 +197,9 @@ func TestStreamDefaultBackoffIsTheDesigns(t *testing.T) {
 	if s.minBackoff != time.Second || s.maxBackoff != 15*time.Second {
 		t.Errorf("backoff %v..%v, want 1s doubling to 15s", s.minBackoff, s.maxBackoff)
 	}
+	if s.stable != 15*time.Second {
+		t.Errorf("stable after %v, want the longest backoff", s.stable)
+	}
 	if s.idle != 45*time.Second {
 		t.Errorf("idle timeout %v, want three missed 15s heartbeats", s.idle)
 	}
@@ -277,6 +280,91 @@ func TestStreamNextHonoursTheContext(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Errorf("Next took %v after its context ended", time.Since(start))
+	}
+}
+
+// A server (or proxy) that accepts the stream and drops it at once gets
+// the same doubling backoff as one that refuses it: the backoff resets
+// only after a connection has stayed up.
+func TestStreamBackoffSurvivesShortConnections(t *testing.T) {
+	drop := func(http.ResponseWriter, http.Flusher) {}
+	srv := &streamServer{conns: []func(http.ResponseWriter, http.Flusher){drop, drop, drop, drop, drop}}
+	c := newTest(t, "tok", srv.handler(t))
+	s := c.OpenStream("c-1")
+	s.minBackoff, s.maxBackoff = time.Millisecond, 4*time.Millisecond
+	s.stable = time.Hour
+	defer s.Close()
+	var waits []time.Duration
+	for len(waits) < 4 {
+		ev := nextEvent(t, s)
+		if ev.Type == EventDisconnected {
+			waits = append(waits, ev.RetryIn)
+		}
+	}
+	if got := fmt.Sprint(waits); got != "[1ms 2ms 4ms 4ms]" {
+		t.Errorf("waits = %s, want doubling across short connections", got)
+	}
+}
+
+// A connection that stayed up resets the backoff: its drop is retried
+// after the shortest wait.
+func TestStreamBackoffResetsAfterAStableConnection(t *testing.T) {
+	srv := &streamServer{conns: []func(http.ResponseWriter, http.Flusher){
+		func(http.ResponseWriter, http.Flusher) {},
+		func(http.ResponseWriter, http.Flusher) {},
+		func(w http.ResponseWriter, f http.Flusher) { time.Sleep(30 * time.Millisecond) },
+	}}
+	c := newTest(t, "tok", srv.handler(t))
+	s := c.OpenStream("c-1")
+	s.minBackoff, s.maxBackoff, s.stable = time.Millisecond, time.Second, 20*time.Millisecond
+	defer s.Close()
+	var waits []time.Duration
+	for len(waits) < 3 {
+		ev := nextEvent(t, s)
+		if ev.Type == EventDisconnected {
+			waits = append(waits, ev.RetryIn)
+		}
+	}
+	if got := fmt.Sprint(waits); got != "[1ms 2ms 1ms]" {
+		t.Errorf("waits = %s, want a reset after the stable connection", got)
+	}
+}
+
+func TestStreamCloseEndsTheBackoffWait(t *testing.T) {
+	c := newTest(t, "tok", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(503)
+		io.WriteString(w, `{"error":"restarting"}`)
+	})
+	s := c.OpenStream("c-1")
+	s.minBackoff = time.Hour
+	if ev := nextEvent(t, s); ev.Type != EventDisconnected {
+		t.Fatalf("%+v", ev)
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		s.Close()
+	}()
+	start := time.Now()
+	if _, err := s.Next(context.Background()); !errors.Is(err, ErrStreamClosed) {
+		t.Errorf("err = %v, want ErrStreamClosed", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("Next took %v after Close", time.Since(start))
+	}
+}
+
+func TestStreamCloseDuringConnect(t *testing.T) {
+	var s *Stream
+	c := newTest(t, "tok", func(w http.ResponseWriter, r *http.Request) {
+		s.Close()
+		<-r.Context().Done()
+	})
+	s = c.OpenStream("c-1")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if ev, err := s.Next(ctx); !errors.Is(err, ErrStreamClosed) {
+		t.Errorf("Next = %+v, %v; want ErrStreamClosed", ev, err)
 	}
 }
 

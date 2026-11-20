@@ -182,7 +182,10 @@ const maxEvent = 1 << 20
 // Stream is a conversation's event stream, GET
 // /conversations/{id}/stream, kept open: when it drops, Next reconnects
 // with backoff (1 s doubling to 15 s), and a connection that sends
-// nothing for 45 s (three missed heartbeats) is dropped. A 401 ends it:
+// nothing for 45 s (three missed heartbeats) is dropped. The backoff
+// starts over only after a connection has stayed up for 15 s, so a
+// server or proxy that accepts the stream and drops it at once is
+// retried no faster than one that refuses it. A 401 ends the stream:
 // Next returns the error.
 //
 // Next is called from one goroutine at a time; Close from any.
@@ -191,6 +194,9 @@ type Stream struct {
 	conv string
 
 	minBackoff, maxBackoff, idle time.Duration
+	// stable is how long a connection stays up before its drop starts
+	// the backoff over.
+	stable time.Duration
 
 	mu     sync.Mutex
 	closed bool
@@ -198,11 +204,12 @@ type Stream struct {
 	cancel context.CancelCauseFunc // the open connection's
 
 	// Owned by Next.
-	events    chan connEvent // the open connection's, nil when none
-	backoff   time.Duration
-	wait      time.Duration // before the next connect
-	connected bool          // ever
-	err       error         // terminal
+	events      chan connEvent // the open connection's, nil when none
+	backoff     time.Duration
+	wait        time.Duration // before the next connect
+	connected   bool          // ever
+	connectedAt time.Time     // the open connection's
+	err         error         // terminal
 }
 
 // connEvent is one event, or the error that ended a connection.
@@ -215,7 +222,7 @@ type connEvent struct {
 // first Next. A stream may be opened before the conversation exists.
 func (c *Client) OpenStream(conversationID string) *Stream {
 	return &Stream{c: c, conv: conversationID, done: make(chan struct{}),
-		minBackoff: time.Second, maxBackoff: 15 * time.Second, idle: 45 * time.Second}
+		minBackoff: time.Second, maxBackoff: 15 * time.Second, stable: 15 * time.Second, idle: 45 * time.Second}
 }
 
 // Next returns the next event: a server event, or EventConnected and
@@ -242,6 +249,9 @@ func (s *Stream) Next(ctx context.Context) (StreamEvent, error) {
 			if s.isClosed() {
 				return StreamEvent{}, ErrStreamClosed
 			}
+			if time.Since(s.connectedAt) >= s.stable {
+				s.backoff = 0
+			}
 			return s.disconnected(ce.err), nil
 		}
 		return decodeEvent(ce.ev), nil
@@ -256,6 +266,9 @@ func (s *Stream) connect(ctx context.Context) (StreamEvent, error) {
 		case <-ctx.Done():
 			t.Stop()
 			return StreamEvent{}, ctx.Err()
+		case <-s.done:
+			t.Stop()
+			return StreamEvent{}, ErrStreamClosed
 		case <-t.C:
 		}
 		s.wait = 0
@@ -273,6 +286,9 @@ func (s *Stream) connect(ctx context.Context) (StreamEvent, error) {
 	resp, err := s.open(ctx, connCtx, cancel)
 	if err != nil {
 		s.drop()
+		if s.isClosed() {
+			return StreamEvent{}, ErrStreamClosed
+		}
 		if ctx.Err() != nil {
 			return StreamEvent{}, ctx.Err()
 		}
@@ -286,8 +302,7 @@ func (s *Stream) connect(ctx context.Context) (StreamEvent, error) {
 	s.events = events
 	go s.read(connCtx, cancel, resp.Body, events)
 	reconnected := s.connected
-	s.connected = true
-	s.backoff = 0
+	s.connected, s.connectedAt = true, time.Now()
 	return StreamEvent{Type: EventConnected, Reconnected: reconnected}, nil
 }
 

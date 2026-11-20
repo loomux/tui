@@ -513,23 +513,32 @@ func TestContractStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	du := next(t, s, client.EventDispatchUpdate)
-	for du.Dispatch.Status != client.DispatchSucceeded {
-		du = next(t, s, client.EventDispatchUpdate)
-	}
-	if du.Dispatch.DispatchID != d.DispatchID || du.Dispatch.Reply != "streamed" || du.Dispatch.UpdatedAt.IsZero() {
-		t.Errorf("dispatch_update = %+v", du.Dispatch)
-	}
+	// The dispatch's end and its reply message come in either order.
+	var done *client.DispatchUpdate
 	var reply *client.MessageAdded
-	deadline := time.Now().Add(5 * time.Second)
-	for reply == nil && time.Now().Before(deadline) {
-		m := next(t, s, client.EventMessageAdded)
-		if m.Message.Role == client.RoleAssistant {
-			reply = m.Message
+	for done == nil || reply == nil {
+		ev, err := s.Next(ctx(t))
+		if err != nil {
+			t.Fatalf("waiting for the reply (dispatch %+v, message %+v): %v", done, reply, err)
+		}
+		switch ev.Type {
+		case client.EventDisconnected:
+			t.Fatalf("disconnected: %v", ev.Err)
+		case client.EventDispatchUpdate:
+			if ev.Dispatch.Status == client.DispatchSucceeded {
+				done = ev.Dispatch
+			}
+		case client.EventMessageAdded:
+			if ev.Message.Role == client.RoleAssistant {
+				reply = ev.Message
+			}
 		}
 	}
-	if reply == nil || reply.MessageID == "" || reply.CreatedAt.IsZero() {
-		t.Fatalf("message_added = %+v", reply)
+	if done.DispatchID != d.DispatchID || done.Reply != "streamed" || done.UpdatedAt.IsZero() {
+		t.Errorf("dispatch_update = %+v", done)
+	}
+	if reply.MessageID == "" || reply.CreatedAt.IsZero() {
+		t.Errorf("message_added = %+v", reply)
 	}
 
 	srv.SetTaskStatus(task.ID, registry.TaskStatusFailed, nil)
