@@ -1,0 +1,394 @@
+# The API v1 contract lines this client depends on, in the server's
+# contract format (api/testdata/api-v1-contract.txt in github.com/Loomux/server).
+# internal/contract checks every line is in the pinned server's contract.
+# Add a line with each route, field, status or header the client starts
+# to rely on.
+
+* /api/v1/* error - object
+* /api/v1/* error .code string
+* /api/v1/* error .error string
+
+GET /api/v1/version
+GET /api/v1/version response - object
+GET /api/v1/version response .api_version string
+GET /api/v1/version response .server_version string
+GET /api/v1/version response-header Content-Type
+GET /api/v1/version status 200
+
+GET /api/v1/conversations
+GET /api/v1/conversations query limit
+GET /api/v1/conversations request-header Authorization
+GET /api/v1/conversations response - object
+GET /api/v1/conversations response .conversations []object
+GET /api/v1/conversations response .conversations[].conversation_id string
+GET /api/v1/conversations response .conversations[].preview string
+GET /api/v1/conversations response .conversations[].status string
+GET /api/v1/conversations response .conversations[].updated_at time
+GET /api/v1/conversations response .conversations[].workspace_id string
+GET /api/v1/conversations response .has_more boolean
+GET /api/v1/conversations response-header Content-Type
+GET /api/v1/conversations status 200
+GET /api/v1/conversations status 401
+
+GET /api/v1/workspaces
+GET /api/v1/workspaces request-header Authorization
+GET /api/v1/workspaces response - object
+GET /api/v1/workspaces response .workspaces []object
+GET /api/v1/workspaces response .workspaces[].id string
+GET /api/v1/workspaces response .workspaces[].name string
+GET /api/v1/workspaces response-header Content-Type
+GET /api/v1/workspaces status 200
+GET /api/v1/workspaces status 401
+
+GET /api/v1/conversations/{id}
+GET /api/v1/conversations/{id} query before
+GET /api/v1/conversations/{id} query limit
+GET /api/v1/conversations/{id} request-header Authorization
+GET /api/v1/conversations/{id} response - object
+GET /api/v1/conversations/{id} response .confirmations []object
+GET /api/v1/conversations/{id} response .confirmations[].agent_type string omitempty
+GET /api/v1/conversations/{id} response .confirmations[].command string omitempty
+GET /api/v1/conversations/{id} response .confirmations[].created_at time
+GET /api/v1/conversations/{id} response .confirmations[].dispatch_id string omitempty
+GET /api/v1/conversations/{id} response .confirmations[].expires_at time
+GET /api/v1/conversations/{id} response .confirmations[].git_remote string omitempty
+GET /api/v1/conversations/{id} response .confirmations[].id string
+GET /api/v1/conversations/{id} response .confirmations[].kind string
+GET /api/v1/conversations/{id} response .confirmations[].resolved_at time omitempty nullable
+GET /api/v1/conversations/{id} response .confirmations[].status string
+GET /api/v1/conversations/{id} response .confirmations[].status_reason string omitempty
+GET /api/v1/conversations/{id} response .confirmations[].target_id string omitempty
+GET /api/v1/conversations/{id} response .confirmations[].target_name string omitempty
+GET /api/v1/conversations/{id} response .confirmations[].workspace_name string omitempty
+GET /api/v1/conversations/{id} response .conversation_id string
+GET /api/v1/conversations/{id} response .dispatches []object
+GET /api/v1/conversations/{id} response .dispatches[].confirmation_id string omitempty
+GET /api/v1/conversations/{id} response .dispatches[].conversation_id string
+GET /api/v1/conversations/{id} response .dispatches[].created_at time
+GET /api/v1/conversations/{id} response .dispatches[].dispatch_id string
+GET /api/v1/conversations/{id} response .dispatches[].error string omitempty
+GET /api/v1/conversations/{id} response .dispatches[].error_class string omitempty
+GET /api/v1/conversations/{id} response .dispatches[].finished_at time omitempty nullable
+GET /api/v1/conversations/{id} response .dispatches[].reply string omitempty
+GET /api/v1/conversations/{id} response .dispatches[].started_at time omitempty nullable
+GET /api/v1/conversations/{id} response .dispatches[].status string
+GET /api/v1/conversations/{id} response .has_more boolean
+GET /api/v1/conversations/{id} response .messages []object
+GET /api/v1/conversations/{id} response .messages[].content string
+GET /api/v1/conversations/{id} response .messages[].created_at time
+GET /api/v1/conversations/{id} response .messages[].dispatch_id string omitempty
+GET /api/v1/conversations/{id} response .messages[].id string
+GET /api/v1/conversations/{id} response .messages[].role string
+GET /api/v1/conversations/{id} response .messages[].task_id string omitempty
+GET /api/v1/conversations/{id} response .next_before string omitempty
+GET /api/v1/conversations/{id} response .tasks []object
+GET /api/v1/conversations/{id} response .tasks[].agent_type string
+GET /api/v1/conversations/{id} response .tasks[].attention object omitempty nullable
+GET /api/v1/conversations/{id} response .tasks[].attention.detail string omitempty
+GET /api/v1/conversations/{id} response .tasks[].attention.kind string
+GET /api/v1/conversations/{id} response .tasks[].attention.options []object omitempty
+GET /api/v1/conversations/{id} response .tasks[].attention.options[].description string omitempty
+GET /api/v1/conversations/{id} response .tasks[].attention.options[].label string
+GET /api/v1/conversations/{id} response .tasks[].attention.question string omitempty
+GET /api/v1/conversations/{id} response .tasks[].attention.resets string omitempty
+GET /api/v1/conversations/{id} response .tasks[].attention.selected number
+GET /api/v1/conversations/{id} response .tasks[].attention.title string omitempty
+GET /api/v1/conversations/{id} response .tasks[].command string omitempty
+GET /api/v1/conversations/{id} response .tasks[].completed_at time omitempty nullable
+GET /api/v1/conversations/{id} response .tasks[].created_at time
+GET /api/v1/conversations/{id} response .tasks[].error_class string omitempty
+GET /api/v1/conversations/{id} response .tasks[].exit_code number omitempty nullable
+GET /api/v1/conversations/{id} response .tasks[].failure_reason string omitempty
+GET /api/v1/conversations/{id} response .tasks[].id string
+GET /api/v1/conversations/{id} response .tasks[].kind string
+GET /api/v1/conversations/{id} response .tasks[].output_tail string omitempty
+GET /api/v1/conversations/{id} response .tasks[].started_at time omitempty nullable
+GET /api/v1/conversations/{id} response .tasks[].status string
+GET /api/v1/conversations/{id} response .tasks[].updated_at time
+GET /api/v1/conversations/{id} response .tasks[].workspace_id string
+GET /api/v1/conversations/{id} response-header Content-Type
+GET /api/v1/conversations/{id} status 200
+GET /api/v1/conversations/{id} status 401
+GET /api/v1/conversations/{id} status 404
+
+GET /api/v1/conversations/{id}/stream
+GET /api/v1/conversations/{id}/stream event:dispatch_update - object
+GET /api/v1/conversations/{id}/stream event:dispatch_update .dispatch_id string
+GET /api/v1/conversations/{id}/stream event:dispatch_update .error string omitempty
+GET /api/v1/conversations/{id}/stream event:dispatch_update .error_class string omitempty
+GET /api/v1/conversations/{id}/stream event:dispatch_update .reply string omitempty
+GET /api/v1/conversations/{id}/stream event:dispatch_update .status string
+GET /api/v1/conversations/{id}/stream event:dispatch_update .updated_at time
+GET /api/v1/conversations/{id}/stream event:message_added - object
+GET /api/v1/conversations/{id}/stream event:message_added .created_at time
+GET /api/v1/conversations/{id}/stream event:message_added .message_id string
+GET /api/v1/conversations/{id}/stream event:message_added .role string
+GET /api/v1/conversations/{id}/stream event:message_added .task_id string omitempty
+GET /api/v1/conversations/{id}/stream event:task_update - object
+GET /api/v1/conversations/{id}/stream event:task_update .error_class string omitempty
+GET /api/v1/conversations/{id}/stream event:task_update .failure_reason string omitempty
+GET /api/v1/conversations/{id}/stream event:task_update .status string
+GET /api/v1/conversations/{id}/stream event:task_update .task_id string
+GET /api/v1/conversations/{id}/stream event:task_update .updated_at time
+GET /api/v1/conversations/{id}/stream event:task_update .workspace_id string
+GET /api/v1/conversations/{id}/stream request-header Authorization
+GET /api/v1/conversations/{id}/stream response-header Content-Type
+GET /api/v1/conversations/{id}/stream status 200
+GET /api/v1/conversations/{id}/stream status 401
+
+POST /api/v1/dispatch
+POST /api/v1/dispatch query wait
+POST /api/v1/dispatch request - object
+POST /api/v1/dispatch request .confirmation_id string omitempty
+POST /api/v1/dispatch request .conversation_id string
+POST /api/v1/dispatch request .message string
+POST /api/v1/dispatch request .workspace_hint string omitempty
+POST /api/v1/dispatch request-header Authorization
+POST /api/v1/dispatch request-header Idempotency-Key
+POST /api/v1/dispatch request-header Prefer
+POST /api/v1/dispatch response - object
+POST /api/v1/dispatch response .confirmation_id string omitempty
+POST /api/v1/dispatch response .conversation_id string
+POST /api/v1/dispatch response .created_at time
+POST /api/v1/dispatch response .dispatch_id string
+POST /api/v1/dispatch response .error string omitempty
+POST /api/v1/dispatch response .error_class string omitempty
+POST /api/v1/dispatch response .finished_at time omitempty nullable
+POST /api/v1/dispatch response .reply string omitempty
+POST /api/v1/dispatch response .started_at time omitempty nullable
+POST /api/v1/dispatch response .status string
+POST /api/v1/dispatch response-header Content-Type
+POST /api/v1/dispatch response:busy - object
+POST /api/v1/dispatch response:busy .code string
+POST /api/v1/dispatch response:busy .dispatch_id string
+POST /api/v1/dispatch response:busy .error string
+POST /api/v1/dispatch status 200
+POST /api/v1/dispatch status 202
+POST /api/v1/dispatch status 401
+POST /api/v1/dispatch status 409
+POST /api/v1/dispatch status 413
+POST /api/v1/dispatch status 422
+POST /api/v1/dispatch status 503
+
+GET /api/v1/dispatches/{id}
+GET /api/v1/dispatches/{id} request-header Authorization
+GET /api/v1/dispatches/{id} response - object
+GET /api/v1/dispatches/{id} response .confirmation_id string omitempty
+GET /api/v1/dispatches/{id} response .conversation_id string
+GET /api/v1/dispatches/{id} response .created_at time
+GET /api/v1/dispatches/{id} response .dispatch_id string
+GET /api/v1/dispatches/{id} response .error string omitempty
+GET /api/v1/dispatches/{id} response .error_class string omitempty
+GET /api/v1/dispatches/{id} response .finished_at time omitempty nullable
+GET /api/v1/dispatches/{id} response .reply string omitempty
+GET /api/v1/dispatches/{id} response .started_at time omitempty nullable
+GET /api/v1/dispatches/{id} response .status string
+GET /api/v1/dispatches/{id} response-header Content-Type
+GET /api/v1/dispatches/{id} status 200
+GET /api/v1/dispatches/{id} status 404
+
+POST /api/v1/dispatches/{id}/cancel
+POST /api/v1/dispatches/{id}/cancel request-header Authorization
+POST /api/v1/dispatches/{id}/cancel response - object
+POST /api/v1/dispatches/{id}/cancel response .dispatch_id string omitempty
+POST /api/v1/dispatches/{id}/cancel response .task_id string omitempty
+POST /api/v1/dispatches/{id}/cancel response-header Content-Type
+POST /api/v1/dispatches/{id}/cancel status 202
+POST /api/v1/dispatches/{id}/cancel status 404
+POST /api/v1/dispatches/{id}/cancel status 409
+
+POST /api/v1/tasks/{id}/cancel
+POST /api/v1/tasks/{id}/cancel request-header Authorization
+POST /api/v1/tasks/{id}/cancel response - object
+POST /api/v1/tasks/{id}/cancel response .dispatch_id string omitempty
+POST /api/v1/tasks/{id}/cancel response .task_id string omitempty
+POST /api/v1/tasks/{id}/cancel response-header Content-Type
+POST /api/v1/tasks/{id}/cancel status 202
+POST /api/v1/tasks/{id}/cancel status 404
+POST /api/v1/tasks/{id}/cancel status 409
+
+GET /api/v1/tasks/{id}/attach-info
+GET /api/v1/tasks/{id}/attach-info request-header Authorization
+GET /api/v1/tasks/{id}/attach-info response - object
+GET /api/v1/tasks/{id}/attach-info response .attach_command string
+GET /api/v1/tasks/{id}/attach-info response .attach_commands []object
+GET /api/v1/tasks/{id}/attach-info response .attach_commands[].argv []string omitempty
+GET /api/v1/tasks/{id}/attach-info response .attach_commands[].command string
+GET /api/v1/tasks/{id}/attach-info response .attach_commands[].via string
+GET /api/v1/tasks/{id}/attach-info response .target object
+GET /api/v1/tasks/{id}/attach-info response .target.host string
+GET /api/v1/tasks/{id}/attach-info response .target.id string
+GET /api/v1/tasks/{id}/attach-info response .target.kind string
+GET /api/v1/tasks/{id}/attach-info response .target.name string
+GET /api/v1/tasks/{id}/attach-info response .target.user string
+GET /api/v1/tasks/{id}/attach-info response .task_id string
+GET /api/v1/tasks/{id}/attach-info response .tmux_session string
+GET /api/v1/tasks/{id}/attach-info response .tmux_socket string
+GET /api/v1/tasks/{id}/attach-info response-header Content-Type
+GET /api/v1/tasks/{id}/attach-info status 200
+GET /api/v1/tasks/{id}/attach-info status 404
+
+POST /api/v1/tasks/{id}/takeover
+POST /api/v1/tasks/{id}/takeover request - object
+POST /api/v1/tasks/{id}/takeover request .client_label string omitempty
+POST /api/v1/tasks/{id}/takeover request .force boolean omitempty
+POST /api/v1/tasks/{id}/takeover request .mode string omitempty
+POST /api/v1/tasks/{id}/takeover request .ttl_seconds number omitempty nullable
+POST /api/v1/tasks/{id}/takeover request-header Authorization
+POST /api/v1/tasks/{id}/takeover response - object
+POST /api/v1/tasks/{id}/takeover response .attach object
+POST /api/v1/tasks/{id}/takeover response .attach.attach_command string
+POST /api/v1/tasks/{id}/takeover response .attach.attach_commands []object
+POST /api/v1/tasks/{id}/takeover response .attach.attach_commands[].argv []string omitempty
+POST /api/v1/tasks/{id}/takeover response .attach.attach_commands[].command string
+POST /api/v1/tasks/{id}/takeover response .attach.attach_commands[].via string
+POST /api/v1/tasks/{id}/takeover response .attach.target object
+POST /api/v1/tasks/{id}/takeover response .attach.target.host string
+POST /api/v1/tasks/{id}/takeover response .attach.target.id string
+POST /api/v1/tasks/{id}/takeover response .attach.target.kind string
+POST /api/v1/tasks/{id}/takeover response .attach.target.name string
+POST /api/v1/tasks/{id}/takeover response .attach.target.user string
+POST /api/v1/tasks/{id}/takeover response .attach.task_id string
+POST /api/v1/tasks/{id}/takeover response .attach.tmux_session string
+POST /api/v1/tasks/{id}/takeover response .attach.tmux_socket string
+POST /api/v1/tasks/{id}/takeover response .hold object nullable
+POST /api/v1/tasks/{id}/takeover response .hold.acquired_at time
+POST /api/v1/tasks/{id}/takeover response .hold.client_kind string
+POST /api/v1/tasks/{id}/takeover response .hold.client_label string
+POST /api/v1/tasks/{id}/takeover response .hold.ended_at time omitempty nullable
+POST /api/v1/tasks/{id}/takeover response .hold.ended_reason string omitempty
+POST /api/v1/tasks/{id}/takeover response .hold.expires_at time
+POST /api/v1/tasks/{id}/takeover response .hold.id string
+POST /api/v1/tasks/{id}/takeover response .hold.mode string
+POST /api/v1/tasks/{id}/takeover response .hold.prev_status string
+POST /api/v1/tasks/{id}/takeover response .hold.renewed_at time
+POST /api/v1/tasks/{id}/takeover response .hold.session_id string
+POST /api/v1/tasks/{id}/takeover response .hold.task_id string
+POST /api/v1/tasks/{id}/takeover response .hold.ttl_seconds number
+POST /api/v1/tasks/{id}/takeover response .task_id string
+POST /api/v1/tasks/{id}/takeover response-header Content-Type
+POST /api/v1/tasks/{id}/takeover response:held - object
+POST /api/v1/tasks/{id}/takeover response:held .code string
+POST /api/v1/tasks/{id}/takeover response:held .error string
+POST /api/v1/tasks/{id}/takeover response:held .hold object nullable
+POST /api/v1/tasks/{id}/takeover response:held .hold.acquired_at time
+POST /api/v1/tasks/{id}/takeover response:held .hold.client_kind string
+POST /api/v1/tasks/{id}/takeover response:held .hold.client_label string
+POST /api/v1/tasks/{id}/takeover response:held .hold.ended_at time omitempty nullable
+POST /api/v1/tasks/{id}/takeover response:held .hold.ended_reason string omitempty
+POST /api/v1/tasks/{id}/takeover response:held .hold.expires_at time
+POST /api/v1/tasks/{id}/takeover response:held .hold.id string
+POST /api/v1/tasks/{id}/takeover response:held .hold.mode string
+POST /api/v1/tasks/{id}/takeover response:held .hold.prev_status string
+POST /api/v1/tasks/{id}/takeover response:held .hold.renewed_at time
+POST /api/v1/tasks/{id}/takeover response:held .hold.session_id string
+POST /api/v1/tasks/{id}/takeover response:held .hold.task_id string
+POST /api/v1/tasks/{id}/takeover response:held .hold.ttl_seconds number
+POST /api/v1/tasks/{id}/takeover status 200
+POST /api/v1/tasks/{id}/takeover status 400
+POST /api/v1/tasks/{id}/takeover status 404
+POST /api/v1/tasks/{id}/takeover status 409
+POST /api/v1/tasks/{id}/takeover status 502
+
+POST /api/v1/tasks/{id}/takeover/heartbeat
+POST /api/v1/tasks/{id}/takeover/heartbeat request - object
+POST /api/v1/tasks/{id}/takeover/heartbeat request .hold_id string
+POST /api/v1/tasks/{id}/takeover/heartbeat request-header Authorization
+POST /api/v1/tasks/{id}/takeover/heartbeat response - object
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold object nullable
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.acquired_at time
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.client_kind string
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.client_label string
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.ended_at time omitempty nullable
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.ended_reason string omitempty
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.expires_at time
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.id string
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.mode string
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.prev_status string
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.renewed_at time
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.session_id string
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.task_id string
+POST /api/v1/tasks/{id}/takeover/heartbeat response .hold.ttl_seconds number
+POST /api/v1/tasks/{id}/takeover/heartbeat response-header Content-Type
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended - object
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .code string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .ended_reason string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .error string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold object nullable
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.acquired_at time
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.client_kind string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.client_label string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.ended_at time omitempty nullable
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.ended_reason string omitempty
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.expires_at time
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.id string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.mode string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.prev_status string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.renewed_at time
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.session_id string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.task_id string
+POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.ttl_seconds number
+POST /api/v1/tasks/{id}/takeover/heartbeat status 200
+POST /api/v1/tasks/{id}/takeover/heartbeat status 410
+
+POST /api/v1/tasks/{id}/release
+POST /api/v1/tasks/{id}/release request - object
+POST /api/v1/tasks/{id}/release request .hold_id string omitempty
+POST /api/v1/tasks/{id}/release request-header Authorization
+POST /api/v1/tasks/{id}/release response - object
+POST /api/v1/tasks/{id}/release response .hold object omitempty nullable
+POST /api/v1/tasks/{id}/release response .hold.acquired_at time
+POST /api/v1/tasks/{id}/release response .hold.client_kind string
+POST /api/v1/tasks/{id}/release response .hold.client_label string
+POST /api/v1/tasks/{id}/release response .hold.ended_at time omitempty nullable
+POST /api/v1/tasks/{id}/release response .hold.ended_reason string omitempty
+POST /api/v1/tasks/{id}/release response .hold.expires_at time
+POST /api/v1/tasks/{id}/release response .hold.id string
+POST /api/v1/tasks/{id}/release response .hold.mode string
+POST /api/v1/tasks/{id}/release response .hold.prev_status string
+POST /api/v1/tasks/{id}/release response .hold.renewed_at time
+POST /api/v1/tasks/{id}/release response .hold.session_id string
+POST /api/v1/tasks/{id}/release response .hold.task_id string
+POST /api/v1/tasks/{id}/release response .hold.ttl_seconds number
+POST /api/v1/tasks/{id}/release response .status string
+POST /api/v1/tasks/{id}/release response .task_id string
+POST /api/v1/tasks/{id}/release response-header Content-Type
+POST /api/v1/tasks/{id}/release status 200
+POST /api/v1/tasks/{id}/release status 502
+
+GET /api/v1/tasks/{id}/transcript
+GET /api/v1/tasks/{id}/transcript query before
+GET /api/v1/tasks/{id}/transcript query limit
+GET /api/v1/tasks/{id}/transcript request-header Authorization
+GET /api/v1/tasks/{id}/transcript response - object
+GET /api/v1/tasks/{id}/transcript response .has_more boolean
+GET /api/v1/tasks/{id}/transcript response .next_before string omitempty
+GET /api/v1/tasks/{id}/transcript response .task_id string
+GET /api/v1/tasks/{id}/transcript response .turns []object
+GET /api/v1/tasks/{id}/transcript response .turns[].agent_message string
+GET /api/v1/tasks/{id}/transcript response .turns[].created_at time
+GET /api/v1/tasks/{id}/transcript response .turns[].id string
+GET /api/v1/tasks/{id}/transcript response .turns[].pane string
+GET /api/v1/tasks/{id}/transcript response .turns[].user_message string
+GET /api/v1/tasks/{id}/transcript response-header Content-Type
+GET /api/v1/tasks/{id}/transcript status 200
+GET /api/v1/tasks/{id}/transcript status 404
+
+GET /api/v1/sessions
+GET /api/v1/sessions request-header Authorization
+GET /api/v1/sessions response - object
+GET /api/v1/sessions response .sessions []object
+GET /api/v1/sessions response .sessions[].client_kind string
+GET /api/v1/sessions response .sessions[].created_at time
+GET /api/v1/sessions response .sessions[].current boolean
+GET /api/v1/sessions response .sessions[].id string
+GET /api/v1/sessions response .sessions[].label string
+GET /api/v1/sessions response .sessions[].last_used_at time
+GET /api/v1/sessions response-header Content-Type
+GET /api/v1/sessions status 200
+GET /api/v1/sessions status 401
+
+POST /api/v1/logout
+POST /api/v1/logout request-header Authorization
+POST /api/v1/logout status 204
+POST /api/v1/logout status 401
