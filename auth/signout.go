@@ -101,11 +101,15 @@ func Logout(ctx context.Context, s Store, a Account) (LogoutResult, error) {
 		return LogoutResult{}, nil
 	case errors.Is(err, ErrNoKeyring):
 		return LogoutResult{}, err
+	case errors.Is(err, ErrInvalid):
+		// Not a token, so nothing to send the server: all there is to
+		// do is clear the entry.
+		return LogoutResult{Stored: true, NotRevoked: ErrInvalid}, s.Delete(a)
 	case err != nil:
-		// Not a token that can be sent anywhere: all there is to do is
-		// clear the entry.
-		res := LogoutResult{Stored: true, NotRevoked: fmt.Errorf("the stored token can't be read: %w", err)}
-		return res, s.Delete(a)
+		// A token that was refused (an insecure file) or couldn't be
+		// read. It is cleared all the same: a terminal that was told to
+		// sign out keeps none.
+		return LogoutResult{Stored: true, NotRevoked: err}, s.Delete(a)
 	}
 	res := LogoutResult{Stored: true}
 	c, err := client.New(a.Server, token)

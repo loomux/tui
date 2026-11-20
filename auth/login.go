@@ -99,14 +99,23 @@ func (l Login) Run(ctx context.Context) (LoginResult, error) {
 		}
 		// The 401 rule: a token the server refuses is dropped, and the
 		// login goes on. Any other failure says nothing about it.
-		if err := SignedOut(l.Store, l.Account, stored, err); !errors.Is(err, ErrSignedOut) {
+		if !client.Unauthorized(err) {
 			return LoginResult{}, fmt.Errorf("checking the stored token: %w", err)
 		}
-	case errors.Is(err, ErrNoKeyring), errors.Is(err, ErrInsecure):
+		// A store that can't delete couldn't keep the new token either:
+		// better to say so now than after the link is approved.
+		if err := drop(l.Store, l.Account, stored); err != nil {
+			return LoginResult{}, fmt.Errorf("the server no longer accepts the stored token, and it couldn't be deleted from the token store: %w", err)
+		}
+	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, ErrInvalid):
+		// Not a token, so no session is its: the new one replaces it.
+	default:
+		// No keyring, an insecure token file, or a store that couldn't
+		// be read. The last may hold a good token, which a new login
+		// would replace and leave its session behind.
 		return LoginResult{}, err
 	}
-	// ErrNotFound, or an entry that isn't a token: the new one replaces
-	// it.
 
 	token := NewToken()
 	hash := TokenHash(token)

@@ -44,6 +44,11 @@ var (
 	// ErrInsecure: the token file or its directory is open to others, or
 	// isn't a plain file or directory.
 	ErrInsecure = errors.New("insecure token file")
+	// ErrInvalid: what is stored for the account was read, and it isn't
+	// a token (a damaged file, a keyring entry something else wrote).
+	// Nothing can sign in with it: `loomux login` replaces it and
+	// `loomux logout` clears it.
+	ErrInvalid = errors.New("the stored token isn't valid")
 )
 
 // Account is whose token: a profile on a server. The same profile name on

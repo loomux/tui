@@ -491,6 +491,62 @@ func TestLoginStoredTokenCantBeChecked(t *testing.T) {
 	}
 }
 
+// failingGet is a store that can't be read.
+type failingGet struct {
+	Store
+	err error
+}
+
+func (f failingGet) Get(Account) (string, error) { return "", f.err }
+
+// The server refuses the stored token and the store can't delete it: a
+// store that can't be changed couldn't keep a new token either, so the
+// login stops before a link that would be approved for nothing.
+func TestLoginStopsWhenARejectedTokenCantBeDeleted(t *testing.T) {
+	ls := newLinkServer(t)
+	a := Account{Profile: "test", Server: ls.URL}
+	files := newFileStore(t)
+	if err := files.Set(a, token); err != nil { // never this server's
+		t.Fatal(err)
+	}
+	busy := errors.New("device busy")
+	_, err := Login{Account: a, Store: failingDelete{Store: files, err: busy}, Label: "laptop", Interval: 5 * time.Millisecond, Timeout: time.Second,
+		Show: func(Link) { t.Error("a link was shown") }}.Run(testCtx(t))
+	if !errors.Is(err, busy) || !strings.Contains(err.Error(), "no longer accepts") {
+		t.Fatalf("Run = %v, want the store's error, and that the server refused the token", err)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Error("the error repeats the token")
+	}
+	if reqs := ls.requests(); len(reqs) != 1 {
+		t.Errorf("requests = %v, want the one check of the stored token", reqs)
+	}
+}
+
+// The store can't be read (an I/O error, not an entry that isn't a
+// token): what it holds may be a good token, so the login doesn't
+// replace it. It stops before anything is sent or shown.
+func TestLoginStopsWhenTheStoreCantBeRead(t *testing.T) {
+	ls := newLinkServer(t)
+	a := Account{Profile: "test", Server: ls.URL}
+	denied := errors.New("token file: open test.token: permission denied")
+	files := newFileStore(t)
+	if err := files.Set(a, token); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Login{Account: a, Store: failingGet{Store: files, err: denied}, Label: "laptop", Interval: 5 * time.Millisecond, Timeout: time.Second,
+		Show: func(Link) { t.Error("a link was shown") }}.Run(testCtx(t))
+	if !errors.Is(err, denied) {
+		t.Fatalf("Run = %v, want the store's error", err)
+	}
+	if reqs := ls.requests(); len(reqs) != 0 {
+		t.Errorf("requests = %v, want none", reqs)
+	}
+	if got, gerr := files.Get(a); gerr != nil || got != token {
+		t.Errorf("the stored token changed (%v)", gerr)
+	}
+}
+
 // No keyring: login refuses before anything is sent or shown, and says
 // how to opt in to the file store (the design's "Storage and revocation").
 func TestLoginRefusesWithoutAKeyring(t *testing.T) {
@@ -508,9 +564,9 @@ func TestLoginRefusesWithoutAKeyring(t *testing.T) {
 	}
 }
 
-// A stored entry that isn't a token can't be signed in with: the login
-// replaces it.
-func TestLoginReplacesAnUnreadableEntry(t *testing.T) {
+// A stored entry that isn't a token (ErrInvalid) can't be signed in
+// with, and no session can be its: the login replaces it.
+func TestLoginReplacesAnInvalidEntry(t *testing.T) {
 	ls := newLinkServer(t)
 	browser := ls.api.Login()
 	store := newFileStore(t)

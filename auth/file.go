@@ -68,7 +68,7 @@ func (s *FileStore) Get(a Account) (string, error) {
 	var tf tokenFile
 	// The decoder's errors can quote the file, so they aren't passed on.
 	if json.Unmarshal(b, &tf) != nil || checkToken(tf.Token) != nil || tf.Server == "" {
-		return "", fmt.Errorf("token file %s isn't valid: delete it and run `loomux login`", p)
+		return "", fmt.Errorf("%w: token file %s: run `loomux login` to replace it", ErrInvalid, p)
 	}
 	if tf.Server != a.Server {
 		// Issued by another server: the profile has moved.
