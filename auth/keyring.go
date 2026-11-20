@@ -35,7 +35,7 @@ func (s *KeyringStore) Get(a Account) (string, error) {
 		return "", s.unavailable(err)
 	}
 	if err := checkToken(tok); err != nil {
-		return "", fmt.Errorf("keyring: the stored token for %s isn't one (%v): run `loomux login`", a, err)
+		return "", fmt.Errorf("%w: the keyring's entry for %s (%v): run `loomux login` to replace it", ErrInvalid, a, err)
 	}
 	return tok, nil
 }
