@@ -171,8 +171,10 @@ func New(overrides map[string][]string) (*Map, error) {
 			problems = append(problems, fmt.Sprintf("keys.%s: %v", name, err))
 			continue
 		}
-		if onlyOn(d, ComposerScreen) && !slices.ContainsFunc(keys, func(k string) bool { return !typesText(k) }) {
-			problems = append(problems, fmt.Sprintf("keys.%s: %s types text in the composer; give a ctrl+ or alt+ key or a named key such as enter", name, quoted(keys)))
+		// In the composer a key that types text types it, so an action
+		// that works there needs another key too.
+		if slices.Contains(d.screens, ComposerScreen) && !slices.ContainsFunc(keys, func(k string) bool { return !typesText(k) }) {
+			problems = append(problems, fmt.Sprintf("keys.%s: %s types text in the composer, where %s works too; add a ctrl+ or alt+ key or a named key such as enter", name, quoted(keys), name))
 			continue
 		}
 		m.keys[a] = keys
@@ -227,10 +229,6 @@ func lookupDef(a Action) (def, bool) {
 		}
 	}
 	return def{}, false
-}
-
-func onlyOn(d def, s Screen) bool {
-	return len(d.screens) == 1 && d.screens[0] == s
 }
 
 func actionList() string {

@@ -182,6 +182,12 @@ func TestNewErrors(t *testing.T) {
 			[]string{"keys.attach", "no key"}},
 		{"composer action typing text", map[string][]string{"send": {"s"}},
 			[]string{"keys.send", `"s"`, "types text"}},
+		// cancel and back work in the composer too: a key that types text
+		// can't be their only one.
+		{"cancel typing text in the composer", map[string][]string{"cancel": {"x"}},
+			[]string{"keys.cancel", `"x"`, "types text"}},
+		{"back typing text in the composer", map[string][]string{"back": {"h", "space"}},
+			[]string{"keys.back", `"h", "space"`, "types text"}},
 		{"shift with a character", map[string][]string{"attach": {"shift+a"}},
 			[]string{"keys.attach", `"A"`}},
 		{"several problems", map[string][]string{"atach": {"A"}, "watch": {"ctrl+"}},
