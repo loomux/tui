@@ -166,7 +166,7 @@ func take(ctx context.Context, api API, taskID string, o Options, tune func(*Ses
 	// A drive was asked for. Whatever else the server granted isn't what
 	// the person is about to do in the pane: give it back.
 	if m := tk.Hold.Mode; m != "" && m != client.ModeDrive {
-		err := fmt.Errorf("the server answered a request to drive with a %s hold: it was given back and nothing was attached", clean(m))
+		err := fmt.Errorf("the server answered a request to drive with a %s hold: it was given back and nothing was attached", Clean(m))
 		return nil, errors.Join(err, s.Release(ctx))
 	}
 	// The commands to run are the ones the hold came with.
@@ -209,7 +209,7 @@ type Attempt struct {
 
 // String is the attempt's failure in words: "kubectl: exit status 1".
 func (a Attempt) String() string {
-	prog := clean(a.Command.Argv[0])
+	prog := Clean(a.Command.Argv[0])
 	switch {
 	case !a.Started:
 		return fmt.Sprintf("%s couldn't be started: %v", prog, a.Err)
@@ -300,7 +300,7 @@ func (s *Session) Release(ctx context.Context) error {
 
 // attachingLine is the line each run prints first.
 func (s *Session) attachingLine(c Command) string {
-	name := clean(s.Info.Target.Name)
+	name := Clean(s.Info.Target.Name)
 	if name == "" {
 		name = "the task"
 	}
@@ -467,7 +467,7 @@ func (e *EndedError) Error() string {
 	case endedTaskEnded:
 		return "the task ended" + at
 	}
-	return "your hold ended" + at + " (" + clean(e.Reason) + ")"
+	return "your hold ended" + at + " (" + Clean(e.Reason) + ")"
 }
 
 func endedError(hold *client.Hold, reason string) *EndedError {
