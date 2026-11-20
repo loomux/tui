@@ -263,13 +263,29 @@ func TestReleaseReserveFetchFails(t *testing.T) {
 	}
 }
 
-// A patch's notes: main's first-parent commits since the previous release,
-// newest first, so a patch that covers several merged pull requests lists
-// each of them.
+// A patch's notes: main's first-parent commits since the previous
+// published release, newest first, so a patch that covers several merged
+// pull requests lists each of them. A version whose run failed after
+// reserving its tag has no release: its merges go in the next one's
+// notes. gh lists the published releases (it is asked for no drafts).
 func TestReleaseLog(t *testing.T) {
 	r := newRepo(t)
+	published := filepath.Join(t.TempDir(), "published")
+	gh := `#!/bin/sh
+case "$*" in
+"release list --exclude-drafts "*) cat "` + published + `" ;;
+*) echo "unexpected: gh $*" >&2; exit 1 ;;
+esac
+`
+	publish := func(tags ...string) {
+		t.Helper()
+		if err := os.WriteFile(published, []byte(strings.Join(tags, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish()
 	r.git("commit", "-q", "--allow-empty", "-m", "First (#1)")
-	if got, ok := r.run("", nil, "log", "main"); !ok || got != "- First (#1)" {
+	if got, ok := r.run(gh, nil, "log", "main"); !ok || got != "- First (#1)" {
 		t.Errorf("log with no release before = %q, %v", got, ok)
 	}
 	r.git("tag", "v0.1.0")
@@ -280,11 +296,31 @@ func TestReleaseLog(t *testing.T) {
 	r.git("checkout", "-q", "main")
 	r.git("-c", "core.editor=true", "merge", "-q", "--no-ff", "-m", "B (#3)", "side")
 	r.git("tag", "v0.1.1")
-	if got, ok := r.run("", nil, "log", "v0.1.1"); !ok || got != "- B (#3)\n- A (#2)" {
+	publish("v0.2.0-rc.1", "v0.1.0")
+	if got, ok := r.run(gh, nil, "log", "v0.1.1"); !ok || got != "- B (#3)\n- A (#2)" {
 		t.Errorf("log v0.1.1 = %q, %v", got, ok)
 	}
-	if _, ok := r.run("", nil, "log", "nope"); ok {
+	// v0.1.2's run failed after reserving its tag: v0.1.3's notes start
+	// from v0.1.1, the release before it, so they list C (v0.1.2's
+	// merge) too.
+	r.git("commit", "-q", "--allow-empty", "-m", "C (#4)")
+	r.git("tag", "v0.1.2")
+	r.git("commit", "-q", "--allow-empty", "-m", "D (#5)")
+	r.git("tag", "v0.1.3")
+	publish("v0.1.1", "v0.2.0-rc.1", "v0.1.0")
+	if got, ok := r.run(gh, nil, "log", "v0.1.3"); !ok || got != "- D (#5)\n- C (#4)" {
+		t.Errorf("log v0.1.3 after v0.1.2 failed = %q, %v", got, ok)
+	}
+	publish("v0.1.2", "v0.1.1", "v0.2.0-rc.1", "v0.1.0")
+	if got, ok := r.run(gh, nil, "log", "v0.1.3"); !ok || got != "- D (#5)" {
+		t.Errorf("log v0.1.3 = %q, %v", got, ok)
+	}
+	if _, ok := r.run(gh, nil, "log", "nope"); ok {
 		t.Error("log of an unknown commit succeeded")
+	}
+	// Without the list of releases, it doesn't guess.
+	if got, ok := r.run("#!/bin/sh\necho 'HTTP 502' >&2; exit 1\n", nil, "log", "v0.1.3"); ok {
+		t.Errorf("log with gh failing = %q, want an error", got)
 	}
 }
 

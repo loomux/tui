@@ -47,11 +47,13 @@ on the merge commit:
   dropped a merge's release in the server.
 - **One version per commit.** A re-run of a commit that already has a
   version keeps it, and builds and releases that version again.
-- **An older merge after a newer one.** If a newer merge's run released
+- **An older merge after a newer one.** If a newer merge's run reserved
   first, an older merge it contains releases nothing of its own. Its
   changes ship in the newer version, whose notes list both.
-- **A failed run burns its number** unless it is re-run. The next merge
-  takes the next number and the line has a gap. SemVer allows gaps.
+- **A failed run burns its number** unless it is re-run, so re-run it.
+  If it isn't, the next merge takes the next number and the line has a
+  gap (SemVer allows gaps). The failed version's merges ship in the next
+  release, and its notes list them.
 - Before the first milestone, a merge reserves nothing and releases
   nothing.
 
@@ -93,9 +95,9 @@ the second run finds it published.
 3. **release:**
    - The files are checked against `SHA256SUMS`.
    - The notes are a milestone's `CHANGELOG.md` section. For a patch,
-     they are the commits merged to `main` since the previous release
-     instead (`deploy/release.sh log`), one pull request each: usually
-     just the merge. Either way they end with the server pin.
+     they are the commits merged to `main` since the previous published
+     release instead (`deploy/release.sh log`), one pull request each:
+     usually just the merge. Either way they end with the server pin.
    - The release is created as a draft with every file, then published.
      A re-run after a failure replaces a draft left behind and leaves a
      published release alone.

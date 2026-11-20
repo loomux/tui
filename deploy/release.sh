@@ -17,7 +17,8 @@
 #                                              (or the one it already has;
 #                                              nothing before the first release)
 #   deploy/release.sh log <commit>             a patch's notes: main's commits
-#                                              since the previous release
+#                                              since the previous published
+#                                              release
 #   deploy/release.sh check <tag>              the gate for a pushed tag: print
 #                                              the version of a tag on main
 #                                              whose CHANGELOG section is there
@@ -132,9 +133,10 @@ reserve)
       [ "$kind" != minor ] || die "reserve: no release line yet; cut the first version by hand"
       exit 0
     fi
-    # A commit older than the latest release is already in it: it
-    # releases nothing rather than take a higher number than its
-    # successor.
+    # A commit older than the latest reserved version is in that
+    # version: it releases nothing rather than take a higher number than
+    # its successor. (Should that version's run fail, re-run it; if not,
+    # the next release has these changes, and its notes list them.)
     at="$(git rev-list -n 1 "v$latest" 2>/dev/null || true)"
     if [ -n "$at" ] && [ "$at" != "$sha" ] && git merge-base --is-ancestor "$sha" "$at" 2>/dev/null; then
       exit 0
@@ -151,12 +153,24 @@ reserve)
   die "reserve: gave up after 10 tries"
   ;;
 log)
-  # Main's first-parent commits since the previous release (the highest
-  # X.Y.Z tag before the commit), newest first, as "- subject": a squash
-  # merge's subject ends in its pull request's "(#N)".
+  # Main's first-parent commits since the previous published release (the
+  # highest X.Y.Z tag before the commit with a GitHub release that isn't a
+  # draft), newest first, as "- subject": a squash merge's subject ends
+  # in its pull request's "(#N)". A version whose run failed after
+  # reserving its tag has no release, so its merges go in these notes.
+  # Needs gh (GH_TOKEN and GH_REPO in the workflow).
   sha="$(git rev-parse --verify --quiet "${2:-}^{commit}")" || die "log: no commit '${2:-}'"
+  published="$(mktemp)"
+  trap 'rm -f "$published"' EXIT
+  # Newest first: the previous release is among the latest.
+  gh release list --exclude-drafts --limit 200 --json tagName --jq '.[].tagName' > "$published" ||
+    die "log: can't list the releases"
   prev=""
-  if git rev-parse --verify --quiet "$sha^" >/dev/null; then prev="$("$0" latest "$sha^")"; fi
+  if git rev-parse --verify --quiet "$sha^" >/dev/null; then
+    prev="$(git tag --merged "$sha^" --list 'v*' | grep -Fx -f "$published" |
+      sed -n 's/^v\(\(0\|[1-9][0-9]*\)\.\(0\|[1-9][0-9]*\)\.\(0\|[1-9][0-9]*\)\)$/\1/p' |
+      sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+  fi
   if [ -n "$prev" ]; then range="v$prev..$sha"; else range="$sha"; fi
   git log --first-parent --format='- %s' "$range"
   ;;

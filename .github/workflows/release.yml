@@ -175,9 +175,9 @@ jobs:
             gh release delete "${tag}" --yes
           fi
           # A milestone's notes are its CHANGELOG section; a patch's, the
-          # commits merged to main since the previous release (each a pull
-          # request, "(#N)"): usually the one merge, and also any older
-          # merge whose own run released nothing.
+          # commits merged to main since the previous published release
+          # (each a pull request, "(#N)"): usually the one merge, and also
+          # any older merge whose own run released nothing.
           if ! deploy/release.sh notes "${VERSION}" > notes.md 2>/dev/null; then
             deploy/release.sh log "${GITHUB_SHA}" > notes.md
           fi
