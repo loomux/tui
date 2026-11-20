@@ -121,6 +121,12 @@ type Task struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 	StartedAt     *time.Time `json:"started_at"`
 	CompletedAt   *time.Time `json:"completed_at"`
+
+	// Hold is the task's active drive hold (S6), or nil. It comes with a
+	// later server release than the pinned one, so it isn't in
+	// testdata/uses.txt: it is read when a server sends it and nil when
+	// it doesn't. The ticket that bumps the pin past S6 adds its lines.
+	Hold *Hold `json:"hold"`
 }
 
 // Attention is the prompt a needs-attention task is stopped at.
