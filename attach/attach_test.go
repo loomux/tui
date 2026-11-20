@@ -819,6 +819,78 @@ func TestReleaseDuringRunEndsTheCommand(t *testing.T) {
 	}
 }
 
+// releaseWhen notes, when the hold is released, whether a file was there.
+type releaseWhen struct {
+	API
+	file  string
+	there atomic.Bool
+}
+
+func (a *releaseWhen) Release(ctx context.Context, taskID, holdID string) (*client.Release, error) {
+	a.there.Store(exists(a.file)())
+	return a.API.Release(ctx, taskID, holdID)
+}
+
+// A Release during Run doesn't reach the server before the command is
+// gone: the server may type into the pane the moment the hold is
+// released, and the person must be out of it by then.
+func TestReleaseDuringRunWaitsForTheCommand(t *testing.T) {
+	w := newWorld(t)
+	// A command that takes a while to let go after its hangup.
+	w.program("ssh", "trap 'sleep 0.3; touch "+w.file("ended")+"; exit 0' HUP; touch "+w.file("started")+"; while :; do sleep 0.02; done")
+	api := &releaseWhen{API: w.api, file: w.file("ended")}
+	s, err := take(ctx(t), api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		waitFor(t, "the command to start", exists(w.file("started")))
+		if err := s.Release(ctx(t)); err != nil {
+			t.Errorf("Release: %v", err)
+		}
+	}()
+	if _, err := s.Run(ctx(t), Terminal{}); err != nil {
+		t.Errorf("Run: %v", err)
+	}
+	<-released
+	if !api.there.Load() {
+		t.Error("the hold was released while the command was still on the terminal")
+	}
+}
+
+// A question about the next command ends, as a no, when the hold is
+// released meanwhile.
+func TestReleaseDuringTheOfferEndsIt(t *testing.T) {
+	w := newWorld(t)
+	w.program("ssh", "exit 0")
+	s, err := take(ctx(t), w.api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Plan.Commands = []Command{w.program("kubectl", "exit 1"), w.program("docker", "touch "+w.file("second-ran"))}
+	asked := make(chan struct{})
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		<-asked
+		if err := s.Release(ctx(t)); err != nil {
+			t.Errorf("Release: %v", err)
+		}
+	}()
+	_, err = s.Run(ctx(t), Terminal{Offer: func(c context.Context, _ Attempt, _ Command) bool {
+		close(asked)
+		<-c.Done() // a person who never answers
+		return true
+	}})
+	<-released
+	var failed *FailedError
+	if !errors.As(err, &failed) || exists(w.file("second-ran"))() {
+		t.Errorf("err = %v, second ran = %v; want the first failure and nothing more run", err, exists(w.file("second-ran"))())
+	}
+}
+
 // A command that ignores the hangup is killed.
 func TestRunKillsACommandThatWontEnd(t *testing.T) {
 	w := newWorld(t)
