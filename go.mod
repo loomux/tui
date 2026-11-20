@@ -1,10 +1,10 @@
 module github.com/Loomux/tui
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/Loomux/server v0.3.143
+	github.com/Loomux/server v0.3.155
 	github.com/zalando/go-keyring v0.2.8
 )
 
