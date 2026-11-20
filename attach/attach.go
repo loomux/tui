@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Loomux/tui/client"
@@ -98,10 +99,19 @@ type Session struct {
 
 	beat *heartbeat
 
+	// ran says Run was called, and over is closed when the release
+	// starts: a session is one attach, and no command runs once its hold
+	// is being given back.
+	ran         atomic.Bool
+	over        chan struct{}
 	releaseOnce sync.Once
 	released    *client.Release
 	releaseErr  error
 }
+
+// ErrOver is Run's error for a session whose attach is over: it ran, or
+// its hold was released. Take the task again to attach again.
+var ErrOver = errors.New("this attach is over and its hold released: take the task again")
 
 // Take takes a drive hold on the task and chooses how to attach to it.
 // The session it returns is already renewing the hold: call Run, or
@@ -148,7 +158,7 @@ func take(ctx context.Context, api API, taskID string, o Options, tune func(*Ses
 	}
 
 	s := &Session{
-		TaskID: taskID, Hold: *tk.Hold, Info: tk.Attach, api: api,
+		TaskID: taskID, Hold: *tk.Hold, Info: tk.Attach, api: api, over: make(chan struct{}),
 		ttl:      time.Duration(tk.Hold.TTLSeconds) * time.Second,
 		retry:    retryEvery,
 		failFast: failFastWindow, killWait: 3 * time.Second,
@@ -246,14 +256,18 @@ type Result struct {
 // Its errors: a *FailedError (no command attached), an *EndedError (the
 // hold ended some other way than this release), a *ReleaseError (the
 // release didn't reach the server), the heartbeat's *client.Error (a 401:
-// signed out), and ctx's.
+// signed out), ctx's, and ErrOver for a session that already ran or was
+// released: a session is one attach.
 func (s *Session) Run(ctx context.Context, t Terminal) (Result, error) {
 	var res Result
+	if s.ran.Swap(true) || s.isOver() {
+		return res, ErrOver
+	}
 	commands := s.Plan.Commands
 	for i, c := range commands {
 		// Cancelled, or the hold gone, before the command got the
 		// terminal: it doesn't get it.
-		if ctx.Err() != nil || s.beat.goneErr() != nil {
+		if ctx.Err() != nil || s.beat.goneErr() != nil || s.isOver() {
 			break
 		}
 		t.say("%s", s.attachingLine(c))
@@ -270,6 +284,10 @@ func (s *Session) Run(ctx context.Context, t Terminal) (Result, error) {
 			}
 			break
 		}
+		// An ssh that was up for a while and then exited 255 lost its
+		// connection: the person was attached, and may want the next way
+		// in.
+		res.Attached = res.Attached || (a.Started && a.Duration >= s.failFast)
 		t.say("%s", a)
 		if i+1 == len(commands) || !s.offer(ctx, t, a, commands[i+1]) {
 			break
@@ -297,10 +315,21 @@ func (s *Session) Run(ctx context.Context, t Terminal) (Result, error) {
 }
 
 // Release gives the hold back without attaching, and ends the heartbeat.
-// It is safe to call again, and after Run.
+// It is safe to call again, and after Run. Called while Run has a command
+// on the terminal, it ends that command too: nothing runs without the
+// hold.
 func (s *Session) Release(ctx context.Context) error {
 	_, err := s.release(ctx)
 	return err
+}
+
+func (s *Session) isOver() bool {
+	select {
+	case <-s.over:
+		return true
+	default:
+		return false
+	}
 }
 
 // attachingLine is the line each run prints first.
@@ -323,7 +352,7 @@ type ending int
 
 const (
 	endedItself ending = iota // the command exited, or couldn't start
-	endedByStop               // ctx was cancelled
+	endedByStop               // ctx was cancelled, or the hold released
 	endedByHold               // the hold is gone
 )
 
@@ -347,6 +376,9 @@ func (s *Session) attempt(ctx context.Context, c Command, t Terminal) (Attempt, 
 		how = endedByHold
 		p.end(s.killWait)
 	case <-ctx.Done():
+		how = endedByStop
+		p.end(s.killWait)
+	case <-s.over:
 		how = endedByStop
 		p.end(s.killWait)
 	}
@@ -399,6 +431,7 @@ func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Co
 // released even when ctx is cancelled: a signal is when it matters most.
 func (s *Session) release(ctx context.Context) (*client.Release, error) {
 	s.releaseOnce.Do(func() {
+		close(s.over)
 		s.beat.stop()
 		if s.beat.goneErr() != nil {
 			return // the server ended it: there is nothing to release

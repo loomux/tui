@@ -1,3 +1,5 @@
+//go:build unix
+
 package main
 
 // `loomux attach` against a real api.Server from the pinned server module
@@ -434,7 +436,7 @@ func TestAsk(t *testing.T) {
 		{"y", false, true},
 	} {
 		var out bytes.Buffer
-		if got := ask(strings.NewReader(tc.typed), &out, "Go on?", tc.def); got != tc.want {
+		if got := ask(context.Background(), strings.NewReader(tc.typed), &out, "Go on?", tc.def); got != tc.want {
 			t.Errorf("typed %q (default %v): %v, want %v", tc.typed, tc.def, got, tc.want)
 		}
 		want := "Go on? [y/N] "
@@ -448,9 +450,77 @@ func TestAsk(t *testing.T) {
 	// It reads its own line and no further: what follows is the next
 	// program's.
 	in := strings.NewReader("y\nrest")
-	ask(in, io.Discard, "Go on?", false)
+	ask(context.Background(), in, io.Discard, "Go on?", false)
 	if rest, _ := io.ReadAll(in); string(rest) != "rest" {
 		t.Errorf("after the answer the input has %q left, want %q", rest, "rest")
+	}
+}
+
+// A question left unanswered ends when the context does (a signal): the
+// client doesn't sit at a prompt it was told to leave.
+func TestAskEndsWhenCancelled(t *testing.T) {
+	never, w := io.Pipe() // an input nobody types into
+	defer w.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	answered := make(chan bool, 1)
+	go func() { answered <- ask(ctx, never, io.Discard, "Go on?", true) }()
+	select {
+	case got := <-answered:
+		t.Fatalf("ask answered %v with nothing typed", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case got := <-answered:
+		if got {
+			t.Error("a cancelled question was a yes")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ask didn't end when its context was cancelled")
+	}
+}
+
+// A signal while the question about a held task is on screen ends the
+// client at once, with nothing taken.
+func TestAttachSignalAtTheHeldQuestion(t *testing.T) {
+	e := newAttachEnv(t)
+	e.ssh("touch " + e.file("ran"))
+	theirs, err := e.other("desk").Takeover(attachCtx(t), e.task.ID, client.TakeoverRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	never, w := io.Pipe()
+	defer w.Close()
+	old := stdin
+	stdin = never
+	defer func() { stdin = old }()
+
+	var stderr lockedBuffer
+	done := make(chan int, 1)
+	go func() { done <- run([]string{"attach", "--task", e.task.ID}, io.Discard, &stderr) }()
+	deadline := time.Now().Add(15 * time.Second)
+	for !strings.Contains(stderr.String(), "[y/N]") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no question:\n%s", stderr.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case code := <-done:
+		if code != 128+int(syscall.SIGTERM) {
+			t.Errorf("exit %d, want %d; stderr:\n%s", code, 128+int(syscall.SIGTERM), stderr.String())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the client stayed at the question after the signal")
+	}
+	if h := e.srv.ActiveHold(e.task.ID); h == nil || h.ID != theirs.Hold.ID {
+		t.Errorf("the hold = %+v, want desk's still", h)
+	}
+	if e.ran("ran") {
+		t.Error("the command ran")
 	}
 }
 
