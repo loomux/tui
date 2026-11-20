@@ -23,7 +23,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{nil, {"login"}, {"version", "extra"}, {"-h"}, {"--version"}} {
+	for _, args := range [][]string{nil, {"attach"}, {"version", "extra"}, {"-h"}, {"--version"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("%q: exit %d, want 2", args, code)
