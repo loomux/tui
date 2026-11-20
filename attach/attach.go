@@ -101,9 +101,14 @@ type Session struct {
 
 	// ran says Run was called, and over is closed when the release
 	// starts: a session is one attach, and no command runs once its hold
-	// is being given back.
+	// is being given back. running is closed when the command that has
+	// the terminal is gone (nil while none has it): the release waits for
+	// it, so the hold is never given back with the person still in the
+	// pane. mu makes "is it over?" and "a command is starting" one step.
 	ran         atomic.Bool
+	mu          sync.Mutex
 	over        chan struct{}
+	running     chan struct{}
 	releaseOnce sync.Once
 	released    *client.Release
 	releaseErr  error
@@ -272,6 +277,9 @@ func (s *Session) Run(ctx context.Context, t Terminal) (Result, error) {
 		}
 		t.say("%s", s.attachingLine(c))
 		a, how := s.attempt(ctx, c, t)
+		if how == notRun {
+			break
+		}
 		res.Attempts = append(res.Attempts, a)
 		if how != endedItself {
 			res.Attached = a.Started
@@ -308,6 +316,8 @@ func (s *Session) Run(ctx context.Context, t Terminal) (Result, error) {
 	case rel.Hold != nil && rel.Hold.EndedReason != "" && rel.Hold.EndedReason != endedReleased:
 		// The server had ended the hold before this release: say how.
 		return res, endedError(rel.Hold, rel.Hold.EndedReason)
+	case len(res.Attempts) == 0:
+		return res, ErrOver // released before a command got the terminal
 	case !res.Attached:
 		return res, &FailedError{Attempts: res.Attempts}
 	}
@@ -316,8 +326,8 @@ func (s *Session) Run(ctx context.Context, t Terminal) (Result, error) {
 
 // Release gives the hold back without attaching, and ends the heartbeat.
 // It is safe to call again, and after Run. Called while Run has a command
-// on the terminal, it ends that command too: nothing runs without the
-// hold.
+// on the terminal, it ends that command first and waits until it is
+// gone: nothing runs without the hold.
 func (s *Session) Release(ctx context.Context) error {
 	_, err := s.release(ctx)
 	return err
@@ -354,12 +364,24 @@ const (
 	endedItself ending = iota // the command exited, or couldn't start
 	endedByStop               // ctx was cancelled, or the hold released
 	endedByHold               // the hold is gone
+	notRun                    // the session was over before it started
 )
 
 // attempt runs one command on the terminal until it ends, ctx is
 // cancelled or the hold is gone, and leaves the terminal as it found it.
 func (s *Session) attempt(ctx context.Context, c Command, t Terminal) (Attempt, ending) {
 	a := Attempt{Command: c}
+	// From here until this returns, a release waits: see Session.running.
+	s.mu.Lock()
+	if s.isOver() {
+		s.mu.Unlock()
+		return a, notRun
+	}
+	gone := make(chan struct{})
+	s.running = gone
+	s.mu.Unlock()
+	defer close(gone)
+
 	restore := saveTerminal(t)
 	start := time.Now()
 	p, err := startProcess(c, t)
@@ -407,10 +429,10 @@ func (s *Session) failedFast(a Attempt) bool {
 	return a.Duration < s.failFast
 }
 
-// offer asks whether to try next; ctx cancelled or the hold gone
-// meanwhile is a no.
+// offer asks whether to try next; ctx cancelled, the hold gone or the
+// session released meanwhile is a no.
 func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Command) bool {
-	if ctx.Err() != nil || s.beat.goneErr() != nil {
+	if ctx.Err() != nil || s.beat.goneErr() != nil || s.isOver() {
 		return false
 	}
 	if t.Offer == nil {
@@ -420,9 +442,10 @@ func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Co
 	go func() { answer <- t.Offer(ctx, failed, next) }()
 	select {
 	case yes := <-answer:
-		return yes && ctx.Err() == nil && s.beat.goneErr() == nil
+		return yes && ctx.Err() == nil && s.beat.goneErr() == nil && !s.isOver()
 	case <-ctx.Done():
 	case <-s.beat.gone:
+	case <-s.over:
 	}
 	return false
 }
@@ -431,7 +454,16 @@ func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Co
 // released even when ctx is cancelled: a signal is when it matters most.
 func (s *Session) release(ctx context.Context) (*client.Release, error) {
 	s.releaseOnce.Do(func() {
+		// No command starts from here on, and one that has the terminal
+		// is ended (attempt watches over) and waited for: the server may
+		// type into the pane the moment the hold is released.
+		s.mu.Lock()
 		close(s.over)
+		running := s.running
+		s.mu.Unlock()
+		if running != nil {
+			<-running
+		}
 		s.beat.stop()
 		if s.beat.goneErr() != nil {
 			return // the server ended it: there is nothing to release

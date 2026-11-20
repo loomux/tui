@@ -9,6 +9,7 @@ import (
 )
 
 func TestServerIsTheTestsOwn(t *testing.T) {
+	New(t) // without tmux the whole test is skipped, not only its subtest
 	var dir, socket string
 	t.Run("a session", func(t *testing.T) {
 		s := New(t)
