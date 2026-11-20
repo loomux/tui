@@ -73,6 +73,7 @@ notes)
 latest)
   # Only plain X.Y.Z tags start the line: a -rc tag doesn't.
   if [ "${2:-}" = --all ]; then merged=""; else merged="--merged=${2:-HEAD}"; fi
+  # shellcheck disable=SC2086 # empty is no argument, on purpose
   git tag ${merged} --list 'v*' |
     sed -n 's/^v\(\(0\|[1-9][0-9]*\)\.\(0\|[1-9][0-9]*\)\.\(0\|[1-9][0-9]*\)\)$/\1/p' |
     sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1

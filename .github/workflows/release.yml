@@ -1,0 +1,149 @@
+# The release run (R3, LOOM-278; the design in loomux/server,
+# docs/design/tui-client-design.md, "Releases and versioning" and
+# "Packaging"; how to cut one: docs/release.md).
+#
+# It runs only when a v* tag is pushed: by hand, or by
+# `deploy/release.sh reserve`, which a person runs with their own GitHub
+# credentials. A pull request or a branch push never publishes anything
+# (ci.yml checks those, and its TestBuild runs the same build script).
+#
+#   check   the tag is v + SemVer, on main, and a milestone (X.Y.0, -pre)
+#           has its CHANGELOG.md section
+#   build   vet and race tests on the tagged commit, then deploy/build.sh:
+#           CGO-free binaries for linux and darwin on amd64 and arm64, the
+#           version stamped with -ldflags -X, and SHA256SUMS; a build
+#           provenance attestation for each binary
+#   release the GitHub pre-release (every 0.y.z and -pre version is one,
+#           never "latest") with the binaries and SHA256SUMS, created as a
+#           draft and published once every file is up
+#
+# Actions are pinned by commit, with the release in a comment.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# One run per tag. v* tags are immutable (a ruleset), so a tag is pushed
+# once; a re-run of its run finishes what an earlier attempt didn't.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  # The toolchain go.mod names, never a newer one downloaded on the fly,
+  # and go.mod alone, never a go.work.
+  GOTOOLCHAIN: local
+  GOWORK: "off"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The tags and main, to check the tag is on main.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: v
+        run: |
+          set -eu
+          version="$(deploy/release.sh check "${GITHUB_REF_NAME}")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${version}" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # A release builds from nothing a cache could have changed.
+          cache: false
+
+      - run: go vet ./...
+
+      # The tagged commit passed ci.yml on main; this is the same run on
+      # the toolchain that builds the release.
+      - run: go test -race ./...
+
+      - name: Build
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: sh deploy/build.sh "${VERSION}" dist
+
+      - name: Attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/loomux-*
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -eu
+          tag="v${VERSION}"
+          (cd dist && sha256sum -c SHA256SUMS)
+          # A published release is done. A draft is what an attempt that
+          # failed part-way left: start it again.
+          if draft="$(gh release view "${tag}" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "${draft}" = false ]; then echo "${tag} is already released."; exit 0; fi
+            gh release delete "${tag}" --yes
+          fi
+          # A milestone's notes are its CHANGELOG section; a patch's, the
+          # pull request merged as the tagged commit.
+          if ! deploy/release.sh notes "${VERSION}" > notes.md 2>/dev/null; then
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq '.[] | "- \(.title) (#\(.number))"' > notes.md
+            [ -s notes.md ] || git log -1 --format='- %s' > notes.md
+          fi
+          {
+            printf '\nServer pin: `%s`.\n\n' "$(sed -n 's/^const ServerPin = "\(.*\)"$/\1/p' internal/version/serverpin.go)"
+            printf 'Check a download: `sha256sum -c --ignore-missing SHA256SUMS` and\n'
+            printf '`gh attestation verify loomux-%s-<os>-<arch> -R %s`.\n' "${VERSION}" "${GITHUB_REPOSITORY}"
+          } >> notes.md
+          pre=""
+          if deploy/release.sh prerelease "${VERSION}"; then pre="--prerelease"; fi
+          gh release create "${tag}" --verify-tag --draft ${pre} --latest=false \
+            --title "loomux ${VERSION}" --notes-file notes.md dist/*
+          gh release edit "${tag}" --draft=false
