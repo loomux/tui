@@ -14,7 +14,8 @@ the web client.
 ## Status
 
 **Pre-release, not usable yet.** So far there is `loomux version`, plus
-the config file and token stores that `loomux login` will use. Logging
+the config file, the token stores that `loomux login` will use and the
+keymap the screens will use. Logging
 in, the list, chat and attach are added ticket by ticket, following the
 build plan in the design.
 
