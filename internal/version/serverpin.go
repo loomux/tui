@@ -4,4 +4,4 @@ package version
 
 // ServerPin is the github.com/Loomux/server release this client is built
 // and tested against: its requirement in go.mod.
-const ServerPin = "v0.3.143"
+const ServerPin = "v0.3.155"
