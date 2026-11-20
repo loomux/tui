@@ -202,3 +202,66 @@ func TestNoCommandUIError(t *testing.T) {
 		t.Errorf("exit %d, stderr %q", code, stderr.String())
 	}
 }
+
+// loomux open <id> starts the list on that conversation, for the
+// profile's server, which o opens the web at. --profile goes before or
+// after open.
+func TestOpenCommand(t *testing.T) {
+	for _, c := range []struct {
+		args          []string
+		profile, serv string
+	}{
+		{[]string{"open", "conv-1"}, "test", "https://loomux.example.net"},
+		{[]string{"--profile", "prod", "open", "conv-1"}, "prod", "https://loomux.example.org"},
+		{[]string{"open", "--profile", "prod", "conv-1"}, "prod", "https://loomux.example.org"},
+		{[]string{"open", "--profile=prod", "conv-1"}, "prod", "https://loomux.example.org"},
+	} {
+		got := setup(t, twoProfiles, "test", "prod")
+		var stdout, stderr bytes.Buffer
+		if code := run(c.args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q: exit %d, stderr %q", c.args, code, stderr.String())
+		}
+		o := got()
+		if o == nil || o.Open != "conv-1" || o.Profile != c.profile || o.Server != c.serv ||
+			o.API.(*client.Client).Server() != c.serv {
+			t.Errorf("%q: started with %+v", c.args, o)
+		}
+	}
+}
+
+// With no command the list knows its server too (o opens the web there)
+// and opens nothing.
+func TestNoCommandServer(t *testing.T) {
+	got := setup(t, twoProfiles, "test")
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	if o := got(); o == nil || o.Server != "https://loomux.example.net" || o.Open != "" {
+		t.Errorf("started with %+v", o)
+	}
+}
+
+// open takes exactly one id.
+func TestOpenUsage(t *testing.T) {
+	for _, args := range [][]string{{"open"}, {"open", "a", "b"}, {"open", ""}, {"open", " "}, {"open", "--nope", "x"}, {"open", "--profile"}} {
+		got := setup(t, twoProfiles, "test")
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 2 {
+			t.Errorf("%q: exit %d, want 2", args, code)
+		}
+		if got() != nil || !strings.HasPrefix(stderr.String(), "usage: loomux") {
+			t.Errorf("%q: stderr %q", args, stderr.String())
+		}
+	}
+}
+
+// open needs a stored token, as the list does.
+func TestOpenNotSignedIn(t *testing.T) {
+	got := setup(t, twoProfiles)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"open", "conv-1"}, &stdout, &stderr); code != 1 || got() != nil ||
+		!strings.Contains(stderr.String(), "loomux login") {
+		t.Errorf("exit %d, stderr %q", code, stderr.String())
+	}
+}
