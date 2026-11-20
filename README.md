@@ -109,9 +109,9 @@ a named key (`enter`, `esc`, `tab`, `space`, `backspace`, `delete`,
 `up`, `pgdown`, `home`, `f1` to `f20`, …), or `ctrl+`, `alt+` or (with a
 named key) `shift+` before one. An unknown action, something that isn't
 a key, or two actions with the same key on one screen stops `loomux` at
-start with an error that names them. In the composer a key that types
-text types it, so `send`, `newline`, `cancel` and `back` each need a
-`ctrl+`, `alt+` or named key. `choose`'s keys pick options 1, 2, 3… in order. `?` shows the keys
+start with an error that names them. In the composer and the list's
+filter a key that types text types it, so `send`, `newline`, `cancel`,
+`back` and `apply` each need a `ctrl+`, `alt+` or named key. `choose`'s keys pick options 1, 2, 3… in order. `?` shows the keys
 in effect on the current screen.
 
 | Action | Default keys | Screens | What it does |
@@ -123,8 +123,9 @@ in effect on the current screen.
 | `top` | `g` `home` | list, conversation, transcript, help | go to the top |
 | `bottom` | `G` `end` | list, conversation, transcript, help | go to the bottom |
 | `open` | `enter` | list | open the conversation |
-| `back` | `esc` | list, conversation, composer, transcript, help | back |
+| `back` | `esc` | list, conversation, composer, transcript, help, filter | back |
 | `filter` | `/` | list | filter |
+| `apply` | `enter` | filter | keep the filter |
 | `next_group` | `tab` | list | show needs you, running, done or all |
 | `new` | `n` | list | new conversation |
 | `attach` | `a` | list, conversation | attach to the agent |
