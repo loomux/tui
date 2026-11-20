@@ -1,7 +1,8 @@
 // Package ui is the terminal client's Bubble Tea screens (the design in
 // loomux/server, docs/design/tui-client-design.md, "Main workflows"). So
 // far it has the home screen: the attention-first list of conversations,
-// with its filter and its ? help.
+// with its filter and its ? help, and attaching to a conversation's agent
+// from it (attach.go).
 //
 // The list polls GET /conversations?limit=100 every 5 s, counted from the
 // last answer, and at once on Refresh (the design: "right after any
@@ -13,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -36,6 +38,9 @@ type Options struct {
 	Keys    *keymap.Map // the effective keymap (config.Config.Keymap)
 	// Now is the clock rows' ages are counted on: time.Now when nil.
 	Now func() time.Time
+	// Attach is how the attach key attaches; without it the key says
+	// attaching isn't set up.
+	Attach *Attach
 }
 
 const (
@@ -66,6 +71,16 @@ type App struct {
 	quitting      bool
 
 	poller
+
+	// Attaching (attach.go). exec is tea.Exec and newWindow opens a tmux
+	// window; tests replace them.
+	attach    *Attach
+	exec      func(tea.ExecCommand, tea.ExecCallback) tea.Cmd
+	newWindow func(ctx context.Context, name string, env, argv []string) error
+	starting  *starting      // the attach on its way, if one is
+	dialog    *dialog        // its question or text, in the list's place
+	held      held           // a hold taken and not yet attached with
+	work      sync.WaitGroup // requests that may leave a hold behind: Close waits for them
 }
 
 // New returns the screens for a profile's server.
@@ -90,6 +105,10 @@ func New(o Options) *App {
 		screen:  keymap.ListScreen,
 		filter:  in,
 		poller:  poller{names: map[string]string{}},
+
+		attach:    o.Attach,
+		exec:      tea.Exec,
+		newWindow: tmuxNewWindow,
 	}
 }
 
@@ -119,6 +138,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		a.notice = ""
+		if handled, c := a.attachKey(msg); handled {
+			cmd = c
+			break
+		}
 		switch a.screen {
 		case keymap.FilterScreen:
 			cmd = a.filterKey(msg)
@@ -131,6 +154,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.screen == keymap.FilterScreen {
 			cmd = a.typeFilter(msg)
 		}
+	default:
+		cmd = a.attachUpdate(msg)
 	}
 	a.home.scroll(a.bodyHeight())
 	return a, cmd
@@ -140,7 +165,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 var notYet = map[keymap.Action]string{
 	keymap.Open:            "opening a conversation",
 	keymap.NewConversation: "starting a conversation",
-	keymap.Attach:          "attaching",
 	keymap.Watch:           "watching",
 	keymap.Browser:         "opening it in the browser",
 }
@@ -176,6 +200,8 @@ func (a *App) listKey(msg tea.KeyPressMsg) tea.Cmd {
 	case keymap.Help:
 		a.screen = keymap.HelpScreen
 		a.helpOffset = 0
+	case keymap.Attach:
+		return a.startAttach()
 	case keymap.Quit:
 		a.quitting = true
 		return tea.Quit
@@ -267,9 +293,12 @@ func (a *App) View() tea.View {
 		return v
 	}
 	lines := []string{a.header()}
-	if a.screen == keymap.HelpScreen {
+	switch {
+	case a.dialog != nil:
+		lines = append(lines, a.dialogBody()...)
+	case a.screen == keymap.HelpScreen:
 		lines = append(lines, a.helpBody()...)
-	} else {
+	default:
 		lines = append(lines, a.listBody()...)
 	}
 	if a.filterShown() {

@@ -39,6 +39,7 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 	profile := fs.String("profile", "", "")
 	task := fs.String("task", "", "")
 	force := fs.Bool("force", false, "")
+	keepOpen := fs.Bool("keep-open", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -71,6 +72,11 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		explain(stderr, err)
+		if *keepOpen {
+			// In a tmux window of its own, which closes with this
+			// command: the reason stays until it has been read.
+			attach.Pause(ctx, stdin, stderr, "Press enter to close this window.")
+		}
 		return 1
 	}
 	return 0

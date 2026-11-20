@@ -40,6 +40,17 @@ func Ask(ctx context.Context, in io.Reader, out io.Writer, question string, def 
 	return false
 }
 
+// Pause shows text and waits for a line of input (enter), for the input
+// to end, or for ctx: something to be read before what shows it goes
+// away.
+func Pause(ctx context.Context, in io.Reader, out io.Writer, text string) {
+	fmt.Fprint(out, text+" ")
+	readLine(ctx, in)
+	if ctx.Err() != nil {
+		fmt.Fprintln(out)
+	}
+}
+
 // maxAnswer bounds a line of answer.
 const maxAnswer = 256
 
