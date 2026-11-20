@@ -20,8 +20,9 @@ handoff (see below), and the change goes to the design doc through a PR in
 ## Status
 
 **Pre-release.** R1 (repository bootstrap) gives the module, `cmd/loomux`
-with only `version`, and the generated server pin. R2 adds CI. Releases
-(R3) come next.
+with only `version`, and the generated server pin. R2 adds CI. R3 adds
+releases (`docs/release.md`): only a `v*` tag a person pushes publishes
+one, never a pull request or a branch push.
 
 ## The server pin
 
@@ -91,7 +92,8 @@ messages or PR text. Use `example.net` / `example.org` hosts in examples.
   `govulncheck`, all on the toolchain `go.mod` names. The pin rules and
   the `uses.txt` contract check are Go tests, so they run locally too.
   `server-main.yml` runs the tests nightly against the server's `main`;
-  it blocks nothing.
+  it blocks nothing. `release.yml` runs only on a `v*` tag, and only it
+  may write to the repository or attest (`TestOnlyATagPublishes`).
 - Each PR with a user-visible change adds a changelog fragment in
   `changes/` (see `changes/README.md`).
 - Add a dependency only when code uses it. The UI stack (Bubble Tea,

@@ -44,7 +44,8 @@ loomux v0.0.0-20261105205442-e9cf01ab4ff8
 server pin v0.3.143
 ```
 
-A release build prints its release version. A build from a git checkout
+A release build ([`docs/release.md`](docs/release.md)) prints its release
+version. A build from a git checkout
 prints the pseudo-version Go stamps from the commit, and a build with no
 version information prints `dev`.
 
