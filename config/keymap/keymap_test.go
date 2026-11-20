@@ -1,6 +1,8 @@
 package keymap
 
 import (
+	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -312,4 +314,38 @@ func TestHelpComposer(t *testing.T) {
 			t.Errorf("composer help lacks %q:\n%s", w, text)
 		}
 	}
+}
+
+// The README's table of actions is the keymap's: every action, its
+// default keys and its screens, in order.
+func TestREADMETable(t *testing.T) {
+	data, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := readmeTable()
+	if !strings.Contains(string(data), want) {
+		t.Errorf("README.md lacks the keymap's table; it is:\n\n%s", want)
+	}
+}
+
+func readmeTable() string {
+	var sb strings.Builder
+	sb.WriteString("| Action | Default keys | Screens | What it does |\n|---|---|---|---|\n")
+	for _, d := range defs {
+		keys := make([]string, len(d.keys))
+		for i, k := range d.keys {
+			keys[i] = "`" + k + "`"
+		}
+		k := strings.Join(keys, " ")
+		if len(d.keys) >= 3 && isRun(d.keys) {
+			k = "`" + KeysText(d.keys) + "`"
+		}
+		screens := make([]string, len(d.screens))
+		for i, s := range d.screens {
+			screens[i] = string(s)
+		}
+		fmt.Fprintf(&sb, "| `%s` | %s | %s | %s |\n", d.action, k, strings.Join(screens, ", "), d.help)
+	}
+	return sb.String()
 }
