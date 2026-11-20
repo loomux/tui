@@ -25,6 +25,26 @@ The design is
 in `loomux/server`. It stays in that repository, together with every API
 change, because that's where the API is.
 
+## Installing
+
+[`docs/install.md`](docs/install.md) covers downloading a release,
+checking its checksum and attestation, putting it on your `PATH`, and
+`go install`.
+
+## Server versions
+
+`loomux` works with the Loomux server release it is pinned to, or a
+later one on API v1. `loomux version` prints the pin, and each release's
+notes end with it. Later servers only add to API v1, so the pin is the
+oldest server a release is built and tested against.
+
+| loomux | Loomux server |
+|---|---|
+| `main` (the next release) | 0.3.143 or later |
+
+A pin bump updates the `main` row, and cutting a milestone adds a row
+for it ([`docs/release.md`](docs/release.md)).
+
 ## Building from source
 
 You need Go at the version in `go.mod` or later.
@@ -44,7 +64,8 @@ loomux v0.0.0-20261105205442-e9cf01ab4ff8
 server pin v0.3.143
 ```
 
-A release build prints its release version. A build from a git checkout
+A release build ([`docs/release.md`](docs/release.md)) prints its release
+version. A build from a git checkout
 prints the pseudo-version Go stamps from the commit, and a build with no
 version information prints `dev`.
 
