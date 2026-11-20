@@ -407,46 +407,51 @@ func TestOnlyATagPublishes(t *testing.T) {
 	}
 }
 
-// The first milestone, dry run: this repository's CHANGELOG.md takes the
+// Milestones, dry run: this repository's CHANGELOG.md takes the
 // fragments in changes/ (deploy/changelog.sh release), and the section
-// that makes is what release.sh reads as the notes.
+// that makes is what release.sh reads as the notes. It folds two
+// versions no real milestone will have, so the test passes on the file as
+// every milestone leaves it, with its own sections in it.
 func TestChangelogRelease(t *testing.T) {
-	root := filepath.Join("..", "..")
-	dir := t.TempDir()
-	changelog := filepath.Join(dir, "CHANGELOG.md")
-	data, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := t.TempDir()
+	changelog := filepath.Join(dir, "CHANGELOG.md")
 	if err := os.WriteFile(changelog, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	changes := filepath.Join(dir, "changes")
-	if err := os.Mkdir(changes, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fragment := "### Added\n\n- A thing (LOOM-1).\n"
-	if err := os.WriteFile(filepath.Join(changes, "loom-1-thing.md"), []byte(fragment), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("sh", script("changelog.sh"), "release", "0.1.0", "2026-11-20")
-	cmd.Env = append(os.Environ(), "CHANGES_DIR="+changes, "CHANGELOG="+changelog)
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("changelog.sh release: %v: %s", err, b)
-	}
-	got, ok := release(t, "notes", "0.1.0", changelog)
-	if !ok || got != "### Added\n\n- A thing (LOOM-1)." {
-		t.Errorf("notes 0.1.0 = %q, %v", got, ok)
+	for _, v := range []string{"998.0.0", "999.0.0"} {
+		changes := filepath.Join(dir, "changes-"+v)
+		if err := os.Mkdir(changes, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		fragment := "### Added\n\n- A thing for " + v + " (LOOM-1).\n"
+		if err := os.WriteFile(filepath.Join(changes, "loom-1-thing.md"), []byte(fragment), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", script("changelog.sh"), "release", v, "2026-11-20")
+		cmd.Env = append(os.Environ(), "CHANGES_DIR="+changes, "CHANGELOG="+changelog)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("changelog.sh release %s: %v: %s", v, err, b)
+		}
+		got, ok := release(t, "notes", v, changelog)
+		if want := "### Added\n\n- A thing for " + v + " (LOOM-1)."; !ok || got != want {
+			t.Errorf("notes %s = %q, %v; want %q", v, got, ok, want)
+		}
 	}
 	b, _ := os.ReadFile(changelog)
 	for _, want := range []string{
 		"## [Unreleased]",
-		"## [0.1.0] - 2026-11-20",
-		"[Unreleased]: https://github.com/loomux/tui/compare/v0.1.0...HEAD",
-		"[0.1.0]: https://github.com/loomux/tui/releases/tag/v0.1.0",
+		"## [999.0.0] - 2026-11-20",
+		"## [998.0.0] - 2026-11-20",
+		"[Unreleased]: https://github.com/loomux/tui/compare/v999.0.0...HEAD",
+		"[999.0.0]: https://github.com/loomux/tui/releases/tag/v999.0.0",
+		"[998.0.0]: https://github.com/loomux/tui/releases/tag/v998.0.0",
 	} {
 		if !strings.Contains(string(b), want) {
-			t.Errorf("CHANGELOG.md after the release lacks %q:\n%s", want, b)
+			t.Errorf("CHANGELOG.md after two milestones lacks %q:\n%s", want, b)
 		}
 	}
 }
