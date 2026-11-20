@@ -26,6 +26,7 @@ func TestDefaults(t *testing.T) {
 		No:              {"n"},
 		Cancel:          {"x", "ctrl+c"},
 		Browser:         {"o"},
+		TakeBack:        {"T"},
 		Transcript:      {"p"},
 		Help:            {"?"},
 		Send:            {"enter"},
@@ -101,6 +102,10 @@ func TestLookup(t *testing.T) {
 		{FilterScreen, "?", "", 0, false},
 		{FilterScreen, "/", "", 0, false},
 		{ListScreen, "esc", Back, 0, true},
+		// Take back works on the list and in a conversation.
+		{ListScreen, "T", TakeBack, 0, true},
+		{ConversationScreen, "T", TakeBack, 0, true},
+		{ComposerScreen, "T", "", 0, false},
 	}
 	for _, c := range cases {
 		a, i, ok := m.Lookup(c.screen, c.key)
@@ -351,7 +356,7 @@ func TestHelp(t *testing.T) {
 			t.Errorf("help shows attach as %q, want the override", b.Keys)
 		}
 	}
-	for _, a := range []Action{Up, Down, Open, Back, NewConversation, Attach, Watch, Filter, NextGroup, Browser, Help, Quit} {
+	for _, a := range []Action{Up, Down, Open, Back, NewConversation, Attach, Watch, Filter, NextGroup, Browser, TakeBack, Help, Quit} {
 		if !slices.Contains(names, a) {
 			t.Errorf("list help lacks %s: %v", a, names)
 		}

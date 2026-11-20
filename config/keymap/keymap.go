@@ -74,6 +74,7 @@ const (
 	Attach          Action = "attach"
 	Watch           Action = "watch"
 	Browser         Action = "browser"
+	TakeBack        Action = "take_back"
 	Transcript      Action = "transcript"
 	Cancel          Action = "cancel"
 	Yes             Action = "yes"
@@ -116,6 +117,7 @@ var defs = []def{
 	{Attach, []string{"a"}, onTask, "attach to the agent"},
 	{Watch, []string{"w"}, onTask, "watch the agent (read-only)"},
 	{Browser, []string{"o"}, onTask, "open in the browser"},
+	{TakeBack, []string{"T"}, onTask, "take it back from the terminal driving it"},
 	{Transcript, []string{"p"}, []Screen{ConversationScreen}, "show the task's transcript"},
 	{Cancel, []string{"x", "ctrl+c"}, []Screen{ConversationScreen, ComposerScreen}, "cancel the turn in flight"},
 	{Yes, []string{"y"}, []Screen{ConversationScreen}, "answer yes"},
