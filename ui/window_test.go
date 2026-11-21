@@ -27,15 +27,16 @@ func inTmux(t *testing.T, srv *tmuxtest.Server, session string) {
 // The window runs the command as it is, with the environment given by
 // name, and is named for the workspace.
 func TestTmuxNewWindow(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/the/tmux/servers/own") // what the tmux server starts with
 	srv := tmuxtest.New(t)
 	inTmux(t, srv, "screens")
 	dir := t.TempDir()
 	script := filepath.Join(dir, "attach.sh")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$LOOMUX_SERVER\" \"$@\" > " + filepath.Join(dir, "ran") + "\nexec /bin/sleep 600\n"
+	body := "#!/bin/sh\nprintf '%s\\n' \"$LOOMUX_SERVER\" \"state=$XDG_STATE_HOME\" \"$@\" > " + filepath.Join(dir, "ran") + "\nexec /bin/sleep 600\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := tmuxNewWindow(context.Background(), "web", []string{"LOOMUX_SERVER=https://loomux.example.net"},
+	id, err := tmuxNewWindow(context.Background(), "web", []string{"LOOMUX_SERVER=https://loomux.example.net", "XDG_STATE_HOME="},
 		[]string{script, "attach", "--task", "an id with spaces; and $(a shell's) `marks`"})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,9 @@ func TestTmuxNewWindow(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if b, err := os.ReadFile(filepath.Join(dir, "ran")); err == nil && len(b) > 0 {
-			if want := "https://loomux.example.net\nattach\n--task\nan id with spaces; and $(a shell's) `marks`\n"; string(b) != want {
+			// A setting given empty is empty in the window, whatever the
+			// tmux server's own environment has for it.
+			if want := "https://loomux.example.net\nstate=\nattach\n--task\nan id with spaces; and $(a shell's) `marks`\n"; string(b) != want {
 				t.Errorf("the window's command got %q, want %q", b, want)
 			}
 			break
@@ -56,6 +59,17 @@ func TestTmuxNewWindow(t *testing.T) {
 	if names := srv.Tmux("list-windows", "-t", "=screens", "-F", "#{window_name}"); !strings.HasSuffix(names, "\nweb") {
 		t.Errorf("windows = %q, want the new one named web", names)
 	}
+
+	// The window's id closes it again, and only it.
+	if ids := srv.Tmux("list-windows", "-t", "=screens", "-F", "#{window_id}"); !strings.HasSuffix(ids, "\n"+id) {
+		t.Errorf("tmuxNewWindow returned id %q; the windows are %q", id, ids)
+	}
+	if err := tmuxKillWindow(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if names := srv.Tmux("list-windows", "-t", "=screens", "-F", "#{window_name}"); strings.Contains(names, "web") || names == "" {
+		t.Errorf("after the kill the windows are %q, want the first one alone", names)
+	}
 }
 
 // Nothing the server names is a tmux format: a workspace, a setting or
@@ -65,7 +79,7 @@ func TestTmuxNewWindowRunsNoFormat(t *testing.T) {
 	inTmux(t, srv, "screens")
 	dir := t.TempDir()
 	mark := func(name string) string { return "#(/usr/bin/touch " + filepath.Join(dir, name) + ")" }
-	err := tmuxNewWindow(context.Background(), "hub "+mark("from-name"),
+	_, err := tmuxNewWindow(context.Background(), "hub "+mark("from-name"),
 		[]string{"LOOMUX_SERVER=" + mark("from-env")},
 		[]string{"/bin/sh", "-c", "exec /bin/sleep 600", "sh", mark("from-argv")}) // sh ignores the last one
 	if err != nil {
@@ -113,7 +127,7 @@ func TestTmuxNewWindowFails(t *testing.T) {
 	srv := tmuxtest.New(t)
 	inTmux(t, srv, "screens")
 	t.Setenv("TMUX", filepath.Join(t.TempDir(), "no-such-socket")+",1,0")
-	err := tmuxNewWindow(context.Background(), "web", nil, []string{"/bin/sleep", "600"})
+	_, err := tmuxNewWindow(context.Background(), "web", nil, []string{"/bin/sleep", "600"})
 	if err == nil || !strings.Contains(err.Error(), "tmux new-window") {
 		t.Errorf("err = %v, want tmux's own error", err)
 	}

@@ -46,7 +46,10 @@ func TestListIsStartedWithAttach(t *testing.T) {
 	if want := []string{exe, "attach", "--profile", "prod", "--keep-open"}; !slices.Equal(at.Window, want) {
 		t.Errorf("the window's command = %q, want %q", at.Window, want)
 	}
-	want := []string{"XDG_CONFIG_HOME=" + os.Getenv("XDG_CONFIG_HOME"), "XDG_STATE_HOME=" + os.Getenv("XDG_STATE_HOME")}
+	// Each setting is given, also one that is unset here: the tmux
+	// server's own environment may have another value for it, which the
+	// window must not use.
+	want := []string{"LOOMUX_SERVER=", "XDG_CONFIG_HOME=" + os.Getenv("XDG_CONFIG_HOME"), "XDG_STATE_HOME=" + os.Getenv("XDG_STATE_HOME")}
 	if !slices.Equal(at.WindowEnv, want) {
 		t.Errorf("the window's environment = %q, want %q", at.WindowEnv, want)
 	}

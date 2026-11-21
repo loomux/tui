@@ -51,8 +51,10 @@ type attachWorld struct {
 	typed string
 	out   lockedBuffer
 	// windows are the tmux windows asked for; windowErr fails them.
+	// closed are the ones closed again, by id.
 	windows   []window
 	windowErr error
+	closed    []string
 }
 
 type window struct {
@@ -131,9 +133,16 @@ func newAttachWorld(t *testing.T, mode string, inTmux bool) *attachWorld {
 			return fn(c.Run())
 		}
 	}
-	h.app.newWindow = func(_ context.Context, name string, env, argv []string) error {
+	h.app.newWindow = func(_ context.Context, name string, env, argv []string) (string, error) {
 		w.windows = append(w.windows, window{name, slices.Clone(env), slices.Clone(argv)})
-		return w.windowErr
+		if w.windowErr != nil {
+			return "", w.windowErr
+		}
+		return "@7", nil
+	}
+	h.app.closeWindow = func(_ context.Context, id string) error {
+		w.closed = append(w.closed, id)
+		return nil
 	}
 	t.Cleanup(h.app.Close)
 	w.harness = h
@@ -508,6 +517,37 @@ func TestAttachCancelledWhileStarting(t *testing.T) {
 	}
 	if st := w.status(); st != registry.TaskStatusAwaitingInput {
 		t.Errorf("status = %s, want it handed back", st)
+	}
+}
+
+// esc while the tmux window is being opened: a window that opened all
+// the same is closed again, so nothing attaches after the list said the
+// attach was cancelled.
+func TestAttachCancelledWhileTheWindowOpens(t *testing.T) {
+	w := newAttachWorld(t, "auto", true)
+	w.ssh("touch " + w.file("ran"))
+	w.send(keyPress("a"))
+	w.feedOne() // the task: the window is asked for, its answer waits
+	if len(w.windows) != 1 {
+		t.Fatalf("%d windows asked for, want 1", len(w.windows))
+	}
+	w.send(keyPress("esc"))
+	w.flush()
+	if !slices.Equal(w.closed, []string{"@7"}) {
+		t.Errorf("windows closed = %q, want the one that opened", w.closed)
+	}
+	if f := w.footer(); strings.Contains(f, "attaching in a new tmux window") {
+		t.Errorf("the footer says it is attaching after the cancel: %q", f)
+	}
+	if w.ran("ran") || w.srv.ActiveHold(w.task.ID) != nil {
+		t.Error("the screens attached after the cancel")
+	}
+
+	// A window that opens and isn't cancelled stays.
+	w = newAttachWorld(t, "auto", true)
+	w.key("a")
+	if len(w.windows) != 1 || len(w.closed) != 0 {
+		t.Errorf("windows %d, closed %q; want one open", len(w.windows), w.closed)
 	}
 }
 

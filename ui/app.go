@@ -72,15 +72,17 @@ type App struct {
 
 	poller
 
-	// Attaching (attach.go). exec is tea.Exec and newWindow opens a tmux
-	// window; tests replace them.
-	attach    *Attach
-	exec      func(tea.ExecCommand, tea.ExecCallback) tea.Cmd
-	newWindow func(ctx context.Context, name string, env, argv []string) error
-	starting  *starting      // the attach on its way, if one is
-	dialog    *dialog        // its question or text, in the list's place
-	held      held           // a hold taken and not yet attached with
-	work      sync.WaitGroup // requests that may leave a hold behind: Close waits for them
+	// Attaching (attach.go). exec is tea.Exec, newWindow opens a tmux
+	// window and returns its id, and closeWindow closes one; tests
+	// replace them.
+	attach      *Attach
+	exec        func(tea.ExecCommand, tea.ExecCallback) tea.Cmd
+	newWindow   func(ctx context.Context, name string, env, argv []string) (id string, err error)
+	closeWindow func(ctx context.Context, id string) error
+	starting    *starting      // the attach on its way, if one is
+	dialog      *dialog        // its question or text, in the list's place
+	held        held           // a hold taken and not yet attached with
+	work        sync.WaitGroup // requests that may leave a hold behind: Close waits for them
 }
 
 // New returns the screens for a profile's server.
@@ -106,9 +108,10 @@ func New(o Options) *App {
 		filter:  in,
 		poller:  poller{names: map[string]string{}},
 
-		attach:    o.Attach,
-		exec:      tea.Exec,
-		newWindow: tmuxNewWindow,
+		attach:      o.Attach,
+		exec:        tea.Exec,
+		newWindow:   tmuxNewWindow,
+		closeWindow: tmuxKillWindow,
 	}
 }
 
