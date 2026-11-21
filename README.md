@@ -207,6 +207,11 @@ The agent keeps running, and Loomux has it back.
   commands, `loomux` takes nothing and shows them with the reason. A
   server from before holds can't attach yet: `loomux` shows its command
   as text, to run by hand, and never runs it itself.
+- **A release that fails.** If the release can't reach the server,
+  `loomux` says so, and when the hold runs out by itself; the server
+  then hands the task back. Nothing says a hold was released that
+  wasn't: the list says it in its last line, or, when it is quitting,
+  once it has ended.
 
 ### From the list
 
@@ -254,7 +259,8 @@ used.
 `loomux attach` exits 0 when you were attached and the hold was released,
 128 plus the signal's number when a signal ended it, 2 for a usage error
 and 1 for anything else. With `--keep-open` it waits for enter after a
-failure, so that a window that closes with the command still shows why.
+failure, and after `ctrl+c` when the hold couldn't be released, so that a
+window that closes with the command still shows why.
 
 ## License
 

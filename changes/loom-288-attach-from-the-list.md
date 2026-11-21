@@ -10,5 +10,6 @@
 - `[attach] mode` in the config chooses how the list attaches: `auto` (a
   tmux window inside tmux, else on this terminal), `inline` or `window`
   (LOOM-288).
-- `loomux attach --keep-open` waits for enter after a failure, for a
-  window that closes with the command (LOOM-288).
+- `loomux attach --keep-open` waits for enter after a failure, and after
+  `ctrl+c` when the hold couldn't be released, for a window that closes
+  with the command (LOOM-288).

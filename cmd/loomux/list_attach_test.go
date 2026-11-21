@@ -5,9 +5,11 @@ package main
 import (
 	"bytes"
 	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -119,6 +121,86 @@ func TestAttachKeepOpen(t *testing.T) {
 	code, _, out := loomux("attach", "--keep-open", "--task", e.task.ID)
 	if code != 0 || strings.Contains(out, "enter") {
 		t.Errorf("after a detach: exit %d, stderr:\n%s", code, out)
+	}
+}
+
+// ctrl+c in the window ends the attach, and the release fails: the window
+// stays until enter, so the hold still held can be read about. With the
+// release made, it closes at once.
+func TestAttachKeepOpenAfterAnInterrupt(t *testing.T) {
+	for _, releaseFails := range []bool{true, false} {
+		e := newAttachEnv(t)
+		e.ssh("touch " + e.file("started") + "; exec sleep 60")
+		if releaseFails {
+			e.refuse = func(r *http.Request) int {
+				if strings.HasSuffix(r.URL.Path, "/release") {
+					return http.StatusNotFound
+				}
+				return 0
+			}
+		}
+		// A file, as a terminal is: the command gets it as it is.
+		typing, type_, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer typing.Close()
+		defer type_.Close()
+		old := stdin
+		stdin = typing
+		defer func() { stdin = old }()
+
+		var stderr lockedBuffer
+		done := make(chan int, 1)
+		go func() { done <- run([]string{"attach", "--keep-open", "--task", e.task.ID}, io.Discard, &stderr) }()
+		deadline := time.Now().Add(15 * time.Second)
+		for !e.ran("started") {
+			if time.Now().After(deadline) {
+				t.Fatalf("the command didn't start:\n%s", stderr.String())
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+			t.Fatal(err)
+		}
+		interrupted := 128 + int(syscall.SIGINT)
+
+		if !releaseFails {
+			select {
+			case code := <-done:
+				if code != interrupted || strings.Contains(stderr.String(), "enter") {
+					t.Errorf("released: exit %d, stderr:\n%s", code, stderr.String())
+				}
+			case <-time.After(20 * time.Second):
+				t.Fatalf("released: waited after the interrupt:\n%s", stderr.String())
+			}
+			continue
+		}
+		for !strings.Contains(stderr.String(), "enter") {
+			select {
+			case code := <-done:
+				t.Fatalf("exited %d without waiting for enter:\n%s", code, stderr.String())
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no word about enter:\n%s", stderr.String())
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !strings.Contains(stderr.String(), "couldn't release the hold") {
+			t.Errorf("the failed release isn't on screen:\n%s", stderr.String())
+		}
+		if _, err := type_.Write([]byte("\n")); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case code := <-done:
+			if code != interrupted {
+				t.Errorf("exit %d, want %d", code, interrupted)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("didn't exit after enter")
+		}
 	}
 }
 

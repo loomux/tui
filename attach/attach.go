@@ -130,7 +130,9 @@ var ErrOver = errors.New("this attach is over and its hold released: take the ta
 // holder's hold, to ask about Force; client.CodeTaskInactive;
 // client.CodeDetachFailed; a 404 for an unknown task), a
 // *NoCommandError, and an *UnsupportedError from a server without the
-// takeover route. In every case nothing is held when it returns one.
+// takeover route. In every case nothing is held when it returns one,
+// unless a hold it took and gave back couldn't be released: its error is
+// then also a *ReleaseError, and that hold ends when its lease runs out.
 func Take(ctx context.Context, api API, taskID string, o Options) (*Session, error) {
 	return take(ctx, api, taskID, o, nil)
 }
@@ -181,8 +183,11 @@ func take(ctx context.Context, api API, taskID string, o Options, tune func(*Ses
 	// A drive was asked for. Whatever else the server granted isn't what
 	// the person is about to do in the pane: give it back.
 	if m := tk.Hold.Mode; m != "" && m != client.ModeDrive {
-		err := fmt.Errorf("the server answered a request to drive with a %s hold: it was given back and nothing was attached", Clean(m))
-		return nil, errors.Join(err, s.Release(ctx))
+		answered := "the server answered a request to drive with a " + Clean(m) + " hold"
+		if err := s.Release(ctx); err != nil {
+			return nil, errors.Join(errors.New(answered+": nothing was attached"), err)
+		}
+		return nil, errors.New(answered + ": it was given back and nothing was attached")
 	}
 	// The commands to run are the ones the hold came with.
 	s.Plan = ch.plan(ctx, &s.Info, o.Config)

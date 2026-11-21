@@ -64,6 +64,13 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 		var rel *attach.ReleaseError
 		if errors.As(err, &rel) {
 			fmt.Fprintf(stderr, "loomux: %v\n", rel)
+			if *keepOpen && sig == os.Interrupt {
+				// ctrl+c in a window that closes with this command: the
+				// hold still held stays on screen until read. Told to stop
+				// (SIGTERM) or with the window gone (SIGHUP), it doesn't
+				// wait. Another ctrl+c ends it at once (attach.Signals).
+				attach.Pause(context.Background(), stdin, stderr, "Press enter to close this window.")
+			}
 		}
 		if n, ok := sig.(syscall.Signal); ok {
 			return 128 + int(n)
