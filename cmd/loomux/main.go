@@ -137,12 +137,12 @@ func attachFromList(c *client.Client, cfg *config.Config, p config.Profile) *ui.
 		at.Window = []string{exe, "attach", "--profile", p.Name, "--keep-open"}
 	}
 	// A tmux window starts from the tmux server's environment, not this
-	// program's: what chooses the config, the token store and the server
-	// here has to reach it by name.
+	// program's: what chooses the server, the config and the token store
+	// here has to reach it by name. One that is unset here is given
+	// empty, which each of the three reads as unset: the tmux server's
+	// own value, from wherever it was started, isn't the window's.
 	for _, name := range []string{"LOOMUX_SERVER", "XDG_CONFIG_HOME", "XDG_STATE_HOME"} {
-		if v := os.Getenv(name); v != "" {
-			at.WindowEnv = append(at.WindowEnv, name+"="+v)
-		}
+		at.WindowEnv = append(at.WindowEnv, name+"="+os.Getenv(name))
 	}
 	return at
 }

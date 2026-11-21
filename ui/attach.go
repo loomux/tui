@@ -63,8 +63,10 @@ type Attach struct {
 	// this program, "attach" and the profile. "--task ID" is added.
 	Window []string
 	// WindowEnv are the NAME=value settings of this program's environment
-	// that the window's command needs too: a tmux window starts from the
-	// tmux server's environment, not from this program's.
+	// that the window's command must have as they are here: a tmux window
+	// starts from the tmux server's environment, not from this program's.
+	// One that is unset here is given empty, so the tmux server's own
+	// value for it isn't used.
 	WindowEnv []string
 }
 
@@ -128,9 +130,10 @@ type (
 		ok   bool
 		err  error
 	}
-	// windowMsg is tmux's answer to the new window.
+	// windowMsg is tmux's answer to the new window: its id.
 	windowMsg struct {
 		st  *starting
+		id  string
 		err error
 	}
 	// takenMsg is the takeover's answer. The session is in App.held.
@@ -239,7 +242,8 @@ func (a *App) openWindow(st *starting) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(st.ctx, requestTimeout)
 		defer cancel()
-		return windowMsg{st, open(ctx, name, env, argv)}
+		id, err := open(ctx, name, env, argv)
+		return windowMsg{st, id, err}
 	}
 }
 
@@ -251,7 +255,19 @@ func (a *App) gotWindow(msg windowMsg) tea.Cmd {
 	switch {
 	case st.cancelled:
 		a.settle(st)
-		return nil
+		if msg.err != nil {
+			return nil
+		}
+		// It opened all the same. Closed again, its `loomux attach` is
+		// hung up, and gives back the hold if it had taken it: nothing
+		// attaches after the list said the attach was cancelled.
+		id, closeWindow := msg.id, a.closeWindow
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+			defer cancel()
+			_ = closeWindow(ctx, id)
+			return nil
+		}
 	case msg.err != nil:
 		// Not the end of the attach: here, then.
 		st.preface = "couldn't open a tmux window (" + clean(msg.err.Error()) + "): attaching here"
@@ -280,21 +296,38 @@ func windowName(name string) string {
 // tmuxNewWindow opens a window of the tmux this program runs in, named
 // name, running argv directly (tmux runs several arguments without a
 // shell, and reads neither them nor the environment as formats) with env
-// added to its environment.
-func tmuxNewWindow(ctx context.Context, name string, env, argv []string) error {
-	args := []string{"new-window", "-n", windowName(name)}
+// set in its environment. It returns the window's id.
+func tmuxNewWindow(ctx context.Context, name string, env, argv []string) (string, error) {
+	args := []string{"new-window", "-P", "-F", "#{window_id}", "-n", windowName(name)}
 	for _, kv := range env {
 		args = append(args, "-e", kv)
 	}
 	args = append(append(args, "--"), argv...)
-	out, err := exec.CommandContext(ctx, "tmux", args...).CombinedOutput()
+	out, err := tmux(ctx, args...)
+	return strings.TrimSpace(out), err
+}
+
+// tmuxKillWindow closes the window with id, as tmuxNewWindow returned
+// it.
+func tmuxKillWindow(ctx context.Context, id string) error {
+	_, err := tmux(ctx, "kill-window", "-t", id)
+	return err
+}
+
+// tmux runs a command of the tmux this program runs in. Its error is
+// tmux's own first line.
+func tmux(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		if line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n"); line != "" {
-			return fmt.Errorf("tmux new-window: %s", line)
+		if line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); line != "" {
+			return "", fmt.Errorf("tmux %s: %s", args[0], line)
 		}
-		return fmt.Errorf("tmux new-window: %w", err)
+		return "", fmt.Errorf("tmux %s: %w", args[0], err)
 	}
-	return nil
+	return string(out), nil
 }
 
 // take takes the hold. The session waits in a.held for gotTaken, where
