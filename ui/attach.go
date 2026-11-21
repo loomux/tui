@@ -205,15 +205,22 @@ type (
 		st  *starting
 		err error
 	}
-	// gaveBackMsg is the release of a hold taken for an attach that was
-	// cancelled: rel if it failed, also kept in App.unshown until said.
-	gaveBackMsg struct{ rel *attach.ReleaseError }
+	// gaveBackMsg is the release of a hold taken for an attach that isn't
+	// happening: rel if it failed, also kept in App.unshown until said,
+	// after lead.
+	gaveBackMsg struct {
+		rel  *attach.ReleaseError
+		lead string
+	}
 	// attachedMsg is the attach, over: the terminal is the screens' again.
 	attachedMsg struct {
 		res attach.Result
 		err error
 		// sig is the signal that ended it, if one did.
 		sig os.Signal
+		// notRun: the terminal couldn't be handed over, so the attach
+		// didn't run (err says why), and its hold is still held.
+		notRun bool
 	}
 )
 
@@ -268,7 +275,7 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 	case gaveBackMsg:
 		if msg.rel != nil {
 			a.unshown.said(msg.rel)
-			a.notice = "attach cancelled, but " + clean(msg.rel.Error())
+			a.notice = msg.lead + clean(msg.rel.Error())
 		}
 	}
 	return nil
@@ -450,7 +457,7 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 		if rel != nil {
 			a.notice = "attach cancelled, but " + clean(rel.Error())
 		}
-		return a.giveBack()
+		return a.giveBack("attach cancelled, but ")
 	}
 	if msg.err != nil {
 		var held *client.Error
@@ -470,13 +477,15 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 		if err != nil && e.done.err == nil {
 			e.done.err = err // the terminal couldn't be released or restored
 		}
+		// Bubble Tea skips Run when it can't release the terminal.
+		e.done.notRun = !e.ran
 		return e.done
 	})
 }
 
 // giveBack releases a hold taken for an attach that isn't happening. A
-// release that fails is said in the footer.
-func (a *App) giveBack() tea.Cmd {
+// release that fails is said in the footer, after lead.
+func (a *App) giveBack(lead string) tea.Cmd {
 	sess := a.held.take()
 	if sess == nil {
 		return nil
@@ -490,7 +499,7 @@ func (a *App) giveBack() tea.Cmd {
 		if errors.As(sess.Release(ctx), &rel) {
 			a.unshown.put(rel) // for the footer, or for Close if the screens end first
 		}
-		return gaveBackMsg{rel}
+		return gaveBackMsg{rel, lead}
 	}
 }
 
@@ -589,6 +598,15 @@ func sentence(s string) string {
 func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
 	if st := a.starting; st != nil {
 		a.settle(st)
+	}
+	if msg.notRun {
+		// The terminal stayed the screens': the hold taken for the attach
+		// is given back.
+		a.notice = "couldn't attach: the terminal couldn't be handed over"
+		if msg.err != nil {
+			a.notice = "couldn't attach: " + clean(msg.err.Error())
+		}
+		return a.giveBack("couldn't attach, and ")
 	}
 	// A signal while the attach had the terminal ended the attach, which
 	// released the hold on its way out, or says why it couldn't. An
@@ -796,6 +814,8 @@ type attachExec struct {
 
 	in        io.Reader
 	out, errw io.Writer
+	// ran: Bubble Tea handed the terminal over and called Run.
+	ran bool
 	// done is what the screens are told when they resume.
 	done attachedMsg
 }
@@ -809,6 +829,7 @@ func (e *attachExec) SetStderr(w io.Writer) { e.errw = w }
 // Its error travels in done, never as Run's: the screens resume either
 // way.
 func (e *attachExec) Run() error {
+	e.ran = true
 	sess := e.held.take()
 	if sess == nil {
 		e.done = attachedMsg{err: errors.New("the attach was stopped before it started")}

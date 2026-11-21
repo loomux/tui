@@ -641,6 +641,53 @@ func TestAttachTakeoverThatCouldntGiveBack(t *testing.T) {
 	}
 }
 
+// Bubble Tea couldn't hand the terminal over, so the attach never ran: the
+// hold taken for it is given back, and the footer says why; a failed
+// give-back is said too.
+func TestAttachTerminalNotHandedOver(t *testing.T) {
+	setup := func() *attachWorld {
+		w := newAttachWorld(t, "inline", false)
+		w.ssh("touch " + w.file("ran"))
+		w.app.exec = func(_ tea.ExecCommand, fn tea.ExecCallback) tea.Cmd {
+			return func() tea.Msg { return fn(errors.New("can't release the terminal")) }
+		}
+		return w
+	}
+	w := setup()
+	w.key("a")
+	if w.ran("ran") {
+		t.Error("the command ran")
+	}
+	if h := w.srv.ActiveHold(w.task.ID); h != nil {
+		t.Errorf("the hold wasn't given back: %+v", h)
+	}
+	if f := w.footer(); !strings.Contains(f, "couldn't attach") || !strings.Contains(f, "can't release the terminal") {
+		t.Errorf("footer = %q, want why", f)
+	}
+	if st := w.status(); st != registry.TaskStatusAwaitingInput {
+		t.Errorf("status = %s, want it handed back", st)
+	}
+
+	w = setup()
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusNotFound
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	w.key("a")
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Fatal("the release went through: nothing to report")
+	}
+	if f := w.footer(); !strings.Contains(f, "couldn't attach") || !strings.Contains(f, "couldn't release the hold") {
+		t.Errorf("footer = %q, want the failed release", f)
+	}
+	if err := w.app.Close(); err != nil {
+		t.Errorf("Close reports what the footer showed: %v", err)
+	}
+}
+
 // watchTakeover answers a takeover with its hold relabelled as a watch,
 // which attach.Take gives back at once.
 type watchTakeover struct{ AttachAPI }
