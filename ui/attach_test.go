@@ -644,6 +644,89 @@ func TestCloseReleasesAHoldNotYetAttached(t *testing.T) {
 	}
 }
 
+// The screens quit while tmux was opening the window: a window that
+// opened is closed again, as a hold taken is given back.
+func TestCloseClosesAWindowNotYetShown(t *testing.T) {
+	w := newAttachWorld(t, "auto", true)
+	w.send(keyPress("a"))
+	w.feedOne() // the task: the window is asked for, its answer waits
+	if len(w.windows) != 1 || len(w.closed) != 0 {
+		t.Fatalf("windows %d, closed %q; want one open", len(w.windows), w.closed)
+	}
+	w.app.Close()
+	if !slices.Equal(w.closed, []string{"@7"}) {
+		t.Errorf("windows closed = %q, want the one that opened", w.closed)
+	}
+	// A window the list has shown is the person's: Close leaves it.
+	w = newAttachWorld(t, "auto", true)
+	w.key("a")
+	w.app.Close()
+	if len(w.closed) != 0 {
+		t.Errorf("Close closed a window the list had shown: %q", w.closed)
+	}
+}
+
+// Commands that don't fit the screen can be scrolled to: none is out of
+// reach on a small terminal.
+func TestAttachTextScrolls(t *testing.T) {
+	h := loaded(t, 60, 15)
+	var cmds []attach.Command
+	for _, via := range []string{"kubectl", "docker", "ssh", "last"} {
+		cmds = append(cmds, attach.Command{Via: via, Argv: []string{via, "exec", "-it", "a-machine-with-a-long-name-0", "--", "tmux", "-L", "loomux", "attach", "-t", "loomux-task-1"}})
+	}
+	h.app.showAttachError(&attach.UnsupportedError{Plan: attach.Plan{Commands: cmds}})
+	if f := h.frame(); !strings.Contains(f, "can't attach yet") || strings.Contains(f, "last exec") {
+		t.Fatalf("the top of the text should show, and its end not yet:\n%s", f)
+	}
+	lines := h.lines()
+	if foot := lines[len(lines)-1]; !strings.Contains(foot, "more") || !strings.Contains(foot, "j") {
+		t.Errorf("the footer doesn't say there is more and how to get to it: %q", foot)
+	}
+	for _, l := range lines {
+		if n := len([]rune(l)); n > 60 {
+			t.Errorf("a line is %d wide on a 60-column screen: %q", n, l)
+		}
+	}
+	if len(lines) != 15 {
+		t.Errorf("the frame is %d lines, want 15", len(lines))
+	}
+
+	// Down to the end: the last command, whole.
+	for i := 0; i < 40; i++ {
+		h.key("j")
+	}
+	f := h.frame()
+	if !strings.Contains(f, "last exec") || !strings.Contains(strings.Join(strings.Fields(f), ""), "attach-tloomux-task-1") {
+		t.Fatalf("the end of the text isn't reachable:\n%s", f)
+	}
+	if strings.Contains(f, "can't attach yet") {
+		t.Errorf("the text didn't scroll:\n%s", f)
+	}
+	// And back up, by the other keys too.
+	h.key("g")
+	if f := h.frame(); !strings.Contains(f, "can't attach yet") {
+		t.Errorf("the top isn't back:\n%s", f)
+	}
+	h.key("G")
+	if f := h.frame(); !strings.Contains(f, "last exec") {
+		t.Errorf("the bottom isn't reached:\n%s", f)
+	}
+	h.key("k", "pgup", "pgdown")
+	// Any other key closes it.
+	h.key("esc")
+	if f := h.frame(); strings.Contains(f, "attach by hand") {
+		t.Errorf("the text is still up:\n%s", f)
+	}
+
+	// Text that fits has nothing to scroll: every key closes it.
+	h = loaded(t, 80, 24)
+	h.app.showAttachError(&attach.UnsupportedError{Plan: attach.Plan{Commands: cmds[:1]}})
+	h.key("j")
+	if f := h.frame(); strings.Contains(f, "can't attach yet") {
+		t.Errorf("j didn't close a text that fits:\n%s", f)
+	}
+}
+
 // A signal ended the attach. Told to stop (SIGTERM) or with its terminal
 // gone (SIGHUP), the client quits rather than come back; an interrupt
 // (ctrl+c at ssh's password prompt) only ends the attach, and the list is
