@@ -7,9 +7,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -136,25 +139,38 @@ func (o *opened) take() string {
 }
 
 // failures keeps the releases that didn't reach the server until the
-// screens have said so, or, if they end first, Close has: the hold stays
-// until its lease runs out, which the person has to know.
+// screens have said them, or, if the screens end first, until Close
+// returns them: such a hold stays until its lease runs out, which the
+// person has to know. Each is said once.
 type failures struct {
-	mu  sync.Mutex
-	err error
+	mu   sync.Mutex
+	errs []*attach.ReleaseError
 }
 
-func (f *failures) put(err error) {
+// put keeps rel until it is said.
+func (f *failures) put(rel *attach.ReleaseError) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.err = errors.Join(f.err, err)
+	f.errs = append(f.errs, rel)
 }
 
+// said drops rel: the screens have shown it.
+func (f *failures) said(rel *attach.ReleaseError) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errs = slices.DeleteFunc(f.errs, func(e *attach.ReleaseError) bool { return e == rel })
+}
+
+// take returns the failures not yet said, and drops them.
 func (f *failures) take() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	err := f.err
-	f.err = nil
-	return err
+	errs := make([]error, len(f.errs))
+	for i, e := range f.errs {
+		errs[i] = e
+	}
+	f.errs = nil
+	return errors.Join(errs...)
 }
 
 // dialog is text in the list's place: what an attach has to say that a
@@ -190,8 +206,8 @@ type (
 		err error
 	}
 	// gaveBackMsg is the release of a hold taken for an attach that was
-	// cancelled. A failure is in App.unshown.
-	gaveBackMsg struct{}
+	// cancelled: rel if it failed, also kept in App.unshown until said.
+	gaveBackMsg struct{ rel *attach.ReleaseError }
 	// attachedMsg is the attach, over: the terminal is the screens' again.
 	attachedMsg struct {
 		res attach.Result
@@ -250,8 +266,9 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 	case attachedMsg:
 		return a.gotAttached(msg)
 	case gaveBackMsg:
-		if err := a.unshown.take(); err != nil {
-			a.notice = "attach cancelled, but " + clean(err.Error())
+		if msg.rel != nil {
+			a.unshown.said(msg.rel)
+			a.notice = "attach cancelled, but " + clean(msg.rel.Error())
 		}
 	}
 	return nil
@@ -396,7 +413,8 @@ func tmux(ctx context.Context, args ...string) (string, error) {
 }
 
 // take takes the hold. The session waits in a.held for gotTaken, where
-// Close finds it if the screens end first.
+// Close finds it if the screens end first. So does a hold Take took and
+// couldn't give back, in a.unshown.
 func (a *App) take(st *starting) tea.Cmd {
 	at, force := a.attach, st.force
 	a.work.Add(1)
@@ -408,6 +426,10 @@ func (a *App) take(st *starting) tea.Cmd {
 		if err == nil {
 			a.held.put(sess)
 		}
+		var rel *attach.ReleaseError
+		if errors.As(err, &rel) {
+			a.unshown.put(rel)
+		}
 		return takenMsg{st, err}
 	}
 }
@@ -415,10 +437,19 @@ func (a *App) take(st *starting) tea.Cmd {
 func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	st := msg.st
 	if st != a.starting {
-		return nil
+		return nil // a failed release in it is Close's to say
+	}
+	// A hold the takeover took and couldn't give back is said here: in
+	// the footer after a cancel, else with the rest of the error.
+	var rel *attach.ReleaseError
+	if errors.As(msg.err, &rel) {
+		a.unshown.said(rel)
 	}
 	if st.cancelled {
 		a.settle(st)
+		if rel != nil {
+			a.notice = "attach cancelled, but " + clean(rel.Error())
+		}
 		return a.giveBack()
 	}
 	if msg.err != nil {
@@ -455,20 +486,20 @@ func (a *App) giveBack() tea.Cmd {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
-		if err := sess.Release(ctx); err != nil {
-			a.unshown.put(err) // for the footer, or for Close if the screens end first
+		var rel *attach.ReleaseError
+		if errors.As(sess.Release(ctx), &rel) {
+			a.unshown.put(rel) // for the footer, or for Close if the screens end first
 		}
-		return gaveBackMsg{}
+		return gaveBackMsg{rel}
 	}
 }
 
 // askHeld puts the question about a task another session holds: taking
 // it detaches that client, so it is the person's call.
 func (a *App) askHeld(st *starting, hold *client.Hold) {
-	who := attach.HeldLine(hold)
 	a.dialog = &dialog{
 		lines: []string{
-			strings.ToUpper(who[:1]) + who[1:] + ".",
+			sentence(attach.HeldLine(hold)),
 			"",
 			"Take it over? That client is detached, and the agent is yours to drive.",
 		},
@@ -485,11 +516,13 @@ func (a *App) askHeld(st *starting, hold *client.Hold) {
 }
 
 // showAttachError says why an attach didn't start: the server's commands
-// as text where the person may want to run one by hand, else a line.
+// as text where the person may want to run one by hand, and a hold taken
+// and not given back with when it runs out; else a line.
 func (a *App) showAttachError(err error) {
 	var (
 		old  *attach.UnsupportedError
 		none *attach.NoCommandError
+		rel  *attach.ReleaseError
 	)
 	switch {
 	case errors.As(err, &old):
@@ -505,20 +538,52 @@ func (a *App) showAttachError(err error) {
 		a.dialog = &dialog{lines: lines}
 	case errors.As(err, &none) && len(none.Skipped) > 0:
 		lines := []string{"No attach command can be run from this machine. Nothing was taken.", ""}
-		var rel *attach.ReleaseError
 		if errors.As(err, &rel) {
 			// The commands came with a hold, which couldn't be given back.
-			why := rel.Error()
-			lines = []string{"No attach command can be run from this machine.", "",
-				strings.ToUpper(why[:1]) + why[1:] + ".", ""}
+			lines = []string{"No attach command can be run from this machine.", "", sentence(clean(rel.Error())), ""}
 		}
 		for _, s := range none.Skipped {
 			lines = append(lines, "  "+s.Line, "    "+s.Reason, "")
 		}
 		a.dialog = &dialog{lines: lines}
+	case errors.As(err, &rel):
+		// A hold taken and not given back (attach.Take joins the two): more
+		// than the footer holds.
+		var lines []string
+		for _, e := range joined(err) {
+			text := e.Error()
+			if e != error(rel) {
+				text = "couldn't attach: " + text
+			}
+			lines = append(lines, sentence(clean(text)), "")
+		}
+		a.dialog = &dialog{lines: lines}
 	default:
 		a.notice = "couldn't attach: " + clean(err.Error())
 	}
+}
+
+// joined is err's errors one by one, for an error that joins several
+// (errors.Join), else err.
+func joined(err error) []error {
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		return j.Unwrap()
+	}
+	return []error{err}
+}
+
+// sentence is s as a sentence of its own: a capital first letter and a
+// full stop.
+func sentence(s string) string {
+	if s == "" {
+		return s
+	}
+	r, n := utf8.DecodeRuneInString(s)
+	s = string(unicode.ToUpper(r)) + s[n:]
+	if !strings.HasSuffix(s, ".") {
+		s += "."
+	}
+	return s
 }
 
 func (a *App) gotAttached(msg attachedMsg) tea.Cmd {

@@ -583,6 +583,76 @@ func TestAttachCancelledReportsAFailedRelease(t *testing.T) {
 	}
 }
 
+// The takeover took a hold it then couldn't give back (attach.Take: here a
+// hold that isn't a drive, whose release fails). That is said wherever
+// the attach had got to: on screen, after esc, and by Close when the
+// screens quit before the takeover's answer. Once, each time.
+func TestAttachTakeoverThatCouldntGiveBack(t *testing.T) {
+	setup := func() *attachWorld {
+		w := newAttachWorld(t, "inline", false)
+		w.ssh("touch " + w.file("ran"))
+		w.app.attach.API = watchTakeover{w.app.attach.API}
+		refuse := func(r *http.Request) int {
+			if strings.HasSuffix(r.URL.Path, "/release") {
+				return http.StatusNotFound
+			}
+			return 0
+		}
+		w.refuse.Store(&refuse)
+		return w
+	}
+
+	// Answered: on screen, whole, and Close doesn't say it again.
+	w := setup()
+	w.key("a")
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Fatal("the release went through: nothing to report")
+	}
+	if f := w.frame(); !strings.Contains(f, "Couldn't release the hold") || !strings.Contains(f, "expires by itself") {
+		t.Errorf("the screen doesn't say the hold is still held:\n%s", f)
+	}
+	if err := w.app.Close(); err != nil {
+		t.Errorf("Close reports what the screen showed: %v", err)
+	}
+	if w.ran("ran") {
+		t.Error("the command ran")
+	}
+
+	// esc while the takeover was on its way.
+	w = setup()
+	w.send(keyPress("a"))
+	w.feedOne() // the task: the takeover runs, its answer waits
+	w.send(keyPress("esc"))
+	w.flush()
+	if f := w.footer(); !strings.Contains(f, "cancelled") || !strings.Contains(f, "couldn't release") {
+		t.Errorf("footer = %q, want the cancel and the failed release", f)
+	}
+	if err := w.app.Close(); err != nil {
+		t.Errorf("Close reports what the footer showed: %v", err)
+	}
+
+	// The screens quit before the takeover's answer reached them.
+	w = setup()
+	w.send(keyPress("a"))
+	w.feedOne() // the task: the takeover runs, its answer waits
+	var rel *attach.ReleaseError
+	if err := w.app.Close(); !errors.As(err, &rel) {
+		t.Errorf("Close = %v, want the failed release", err)
+	}
+}
+
+// watchTakeover answers a takeover with its hold relabelled as a watch,
+// which attach.Take gives back at once.
+type watchTakeover struct{ AttachAPI }
+
+func (a watchTakeover) Takeover(ctx context.Context, taskID string, r client.TakeoverRequest) (*client.Takeover, error) {
+	tk, err := a.AttachAPI.Takeover(ctx, taskID, r)
+	if err == nil {
+		tk.Hold.Mode = client.ModeWatch
+	}
+	return tk, err
+}
+
 // esc while the tmux window is being opened: a window that opened all
 // the same is closed again, so nothing attaches after the list said the
 // attach was cancelled.
