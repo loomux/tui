@@ -113,13 +113,39 @@ func (h *held) take() *attach.Session {
 	return s
 }
 
+// opened keeps the id of a tmux window opened and not yet shown as such
+// by the list, so that whatever ends the screens first can close it
+// again.
+type opened struct {
+	mu sync.Mutex
+	id string
+}
+
+func (o *opened) put(id string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.id = id
+}
+
+func (o *opened) take() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	id := o.id
+	o.id = ""
+	return id
+}
+
 // dialog is text in the list's place: what an attach has to say that a
 // footer line can't hold. With yes it is a question: the yes key answers
-// it, any other key is a no. Without, any key closes it.
+// it, any other key is a no. Without, it is text to read: the list's
+// movement keys scroll it when it doesn't fit, and any other key closes
+// it.
 type dialog struct {
 	lines []string
 	yes   func() tea.Cmd
 	no    func()
+	// offset is the first of its wrapped lines on screen.
+	offset int
 }
 
 type (
@@ -130,10 +156,10 @@ type (
 		ok   bool
 		err  error
 	}
-	// windowMsg is tmux's answer to the new window: its id.
+	// windowMsg is tmux's answer to the new window. Its id is in
+	// App.window.
 	windowMsg struct {
 		st  *starting
-		id  string
 		err error
 	}
 	// takenMsg is the takeover's answer. The session is in App.held.
@@ -239,11 +265,16 @@ func (a *App) openWindow(st *starting) tea.Cmd {
 	name := st.name
 	argv := append(append([]string(nil), a.attach.Window...), "--task", st.task)
 	env, open := a.attach.WindowEnv, a.newWindow
+	a.work.Add(1)
 	return func() tea.Msg {
+		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(st.ctx, requestTimeout)
 		defer cancel()
 		id, err := open(ctx, name, env, argv)
-		return windowMsg{st, id, err}
+		if err == nil {
+			a.window.put(id)
+		}
+		return windowMsg{st, err}
 	}
 }
 
@@ -255,14 +286,17 @@ func (a *App) gotWindow(msg windowMsg) tea.Cmd {
 	switch {
 	case st.cancelled:
 		a.settle(st)
-		if msg.err != nil {
+		// It may have opened all the same. Closed again, its `loomux
+		// attach` is hung up, and gives back the hold if it had taken
+		// it: nothing attaches after the list said the attach was
+		// cancelled.
+		id, closeWindow := a.window.take(), a.closeWindow
+		if id == "" {
 			return nil
 		}
-		// It opened all the same. Closed again, its `loomux attach` is
-		// hung up, and gives back the hold if it had taken it: nothing
-		// attaches after the list said the attach was cancelled.
-		id, closeWindow := msg.id, a.closeWindow
+		a.work.Add(1)
 		return func() tea.Msg {
+			defer a.work.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 			defer cancel()
 			_ = closeWindow(ctx, id)
@@ -273,6 +307,8 @@ func (a *App) gotWindow(msg windowMsg) tea.Cmd {
 		st.preface = "couldn't open a tmux window (" + clean(msg.err.Error()) + "): attaching here"
 		return a.take(st)
 	}
+	// The window is the person's from here: it is shown as open.
+	a.window.take()
 	a.settle(st)
 	a.notice = "attaching in a new tmux window; it hands the agent back when you detach"
 	return Refresh
@@ -475,10 +511,14 @@ func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
 // answer, and esc while an attach is starting.
 func (a *App) attachKey(msg tea.KeyPressMsg) (handled bool, cmd tea.Cmd) {
 	if d := a.dialog; d != nil {
-		a.dialog = nil
 		if d.yes == nil {
+			if a.scrollDialog(msg) {
+				return true, nil
+			}
+			a.dialog = nil
 			return true, nil
 		}
+		a.dialog = nil
 		// The yes key is the keymap's, as on a conversation's cards.
 		if act, _, ok := a.keys.Lookup(keymap.ConversationScreen, msg.String()); ok && act == keymap.Yes {
 			return true, d.yes()
@@ -498,10 +538,8 @@ func (a *App) attachKey(msg tea.KeyPressMsg) (handled bool, cmd tea.Cmd) {
 	return false, nil
 }
 
-// dialogBody is the dialog's lines, wrapped to the width, in the list's
-// place.
-func (a *App) dialogBody() []string {
-	height := a.bodyHeight()
+// dialogLines is the dialog's text, wrapped to the width.
+func (a *App) dialogLines() []string {
 	lines := []string{""}
 	for _, l := range a.dialog.lines {
 		indent := len(l) - len(strings.TrimLeft(l, " "))
@@ -509,32 +547,84 @@ func (a *App) dialogBody() []string {
 			lines = append(lines, " "+strings.Repeat(" ", indent)+strings.TrimLeft(w, " "))
 		}
 	}
+	return lines
+}
+
+// dialogOverflow is how many of the dialog's lines don't fit the screen:
+// how far it scrolls.
+func (a *App) dialogOverflow() int {
+	return max(0, len(a.dialogLines())-a.bodyHeight())
+}
+
+// dialogBody is the part of the dialog's lines on screen, in the list's
+// place.
+func (a *App) dialogBody() []string {
+	height := a.bodyHeight()
+	lines := a.dialogLines()
+	a.dialog.offset = max(0, min(a.dialog.offset, a.dialogOverflow()))
+	lines = lines[a.dialog.offset:]
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
 	return lines[:height]
 }
 
-func (a *App) dialogFooter() string {
-	if a.dialog.yes == nil {
-		return faint.Render(fit(" any key closes this", a.width))
+// scrollDialog scrolls a text that doesn't fit by the list's movement
+// keys. It reports false for any other key, and for a text that fits:
+// that key closes it.
+func (a *App) scrollDialog(msg tea.KeyPressMsg) bool {
+	over := a.dialogOverflow()
+	if over == 0 {
+		return false
 	}
+	act, _, ok := a.keys.Lookup(keymap.ListScreen, msg.String())
+	if !ok {
+		return false
+	}
+	d, page := a.dialog, max(1, a.bodyHeight()-1)
+	switch act {
+	case keymap.Up:
+		d.offset--
+	case keymap.Down:
+		d.offset++
+	case keymap.PageUp:
+		d.offset -= page
+	case keymap.PageDown:
+		d.offset += page
+	case keymap.Top:
+		d.offset = 0
+	case keymap.Bottom:
+		d.offset = over
+	default:
+		return false
+	}
+	d.offset = max(0, min(d.offset, over))
+	return true
+}
+
+func (a *App) dialogFooter() string {
 	key := func(act keymap.Action) string {
 		if k := a.keys.Keys(act); len(k) > 0 {
 			return k[0]
 		}
 		return "?"
 	}
-	return faint.Render(fit(" "+bold.Render(key(keymap.Yes))+" take it over  "+bold.Render(key(keymap.No))+" leave it", a.width))
+	switch {
+	case a.dialog.yes != nil:
+		return faint.Render(fit(" "+bold.Render(key(keymap.Yes))+" take it over  "+bold.Render(key(keymap.No))+" leave it", a.width))
+	case a.dialogOverflow() > 0:
+		return faint.Render(fit(" "+bold.Render(key(keymap.Down))+"/"+bold.Render(key(keymap.Up))+" more  any other key closes this", a.width))
+	}
+	return faint.Render(fit(" any key closes this", a.width))
 }
 
 // closeWait is how long Close lets a takeover on its way finish before
 // giving up on it.
 const closeWait = 5 * time.Second
 
-// Close ends what an attach left behind when the screens end, and gives
-// back a hold taken and not yet attached with. Call it once the program
-// has stopped.
+// Close ends what an attach left behind when the screens end: it gives
+// back a hold taken and not yet attached with, and closes a tmux window
+// opened and not yet shown as such. Call it once the program has stopped.
 //
 // A takeover on its way to the server is waited for, closeWait at most:
 // its answer is the only way to learn the hold to give back. One still
@@ -563,6 +653,13 @@ func (a *App) Close() {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
 		_ = sess.Release(ctx) // unreleased, it expires by itself
+	}
+	// A tmux window that opened and that the list never got to show:
+	// closed again, like an attach cancelled while it opened.
+	if id := a.window.take(); id != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		defer cancel()
+		_ = a.closeWindow(ctx, id)
 	}
 }
 
