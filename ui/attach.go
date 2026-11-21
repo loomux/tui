@@ -234,9 +234,6 @@ func (a *App) gotTask(msg taskMsg) tea.Cmd {
 // openWindow opens the attach's own tmux window.
 func (a *App) openWindow(st *starting) tea.Cmd {
 	name := st.name
-	if name == "" {
-		name = "loomux"
-	}
 	argv := append(append([]string(nil), a.attach.Window...), "--task", st.task)
 	env, open := a.attach.WindowEnv, a.newWindow
 	return func() tea.Msg {
@@ -265,11 +262,27 @@ func (a *App) gotWindow(msg windowMsg) tea.Cmd {
 	return Refresh
 }
 
+// windowName is a workspace's name as tmux new-window's -n takes it. tmux
+// reads -n as a format, and a format can run a shell command: #(command).
+// The name is the server's text, so every # is doubled, which tmux reads
+// as the character itself. It is cut to 40 characters: a window's name is
+// a label.
+func windowName(name string) string {
+	if name == "" {
+		name = "loomux"
+	}
+	if r := []rune(name); len(r) > 40 {
+		name = string(r[:40])
+	}
+	return strings.ReplaceAll(name, "#", "##")
+}
+
 // tmuxNewWindow opens a window of the tmux this program runs in, named
 // name, running argv directly (tmux runs several arguments without a
-// shell) with env added to its environment.
+// shell, and reads neither them nor the environment as formats) with env
+// added to its environment.
 func tmuxNewWindow(ctx context.Context, name string, env, argv []string) error {
-	args := []string{"new-window", "-n", name}
+	args := []string{"new-window", "-n", windowName(name)}
 	for _, kv := range env {
 		args = append(args, "-e", kv)
 	}
