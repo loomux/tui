@@ -144,7 +144,7 @@ func newAttachWorld(t *testing.T, mode string, inTmux bool) *attachWorld {
 		w.closed = append(w.closed, id)
 		return nil
 	}
-	t.Cleanup(h.app.Close)
+	t.Cleanup(func() { _ = h.app.Close() })
 	w.harness = h
 	h.run(h.app.Init())
 	h.send(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -367,6 +367,22 @@ func TestAttachNoCommandShowsWhy(t *testing.T) {
 	}
 }
 
+// The takeover's commands are none this machine can run, and the hold it
+// took couldn't be given back (attach.Take joins the two): the screen
+// doesn't say nothing was taken.
+func TestAttachNoCommandAfterTheTakeover(t *testing.T) {
+	h := loaded(t, 80, 24)
+	none := &attach.NoCommandError{Skipped: []attach.Skipped{{Via: "ssh", Line: "ssh loomux@box.example.net", Reason: "ssh isn't on PATH"}}}
+	h.app.showAttachError(errors.Join(none, &attach.ReleaseError{Err: errors.New("connection refused"), Expires: t0}))
+	f := h.frame()
+	if strings.Contains(f, "Nothing was taken") || !strings.Contains(f, "Couldn't release the hold") {
+		t.Errorf("the screen doesn't say the hold is still held:\n%s", f)
+	}
+	if !strings.Contains(f, "ssh loomux@box.example.net") {
+		t.Errorf("the commands aren't shown:\n%s", f)
+	}
+}
+
 // The hold ended another way while attached: the screens come back
 // saying which.
 func TestAttachSaysHowTheHoldEnded(t *testing.T) {
@@ -520,6 +536,53 @@ func TestAttachCancelledWhileStarting(t *testing.T) {
 	}
 }
 
+// esc after the takeover, and the hold can't be given back: the footer
+// says so, and when it runs out.
+func TestAttachCancelledReportsAFailedRelease(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusNotFound
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	w.send(keyPress("a"))
+	w.feedOne() // the task: the takeover runs, its answer waits
+	w.send(keyPress("esc"))
+	w.flush()
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Fatal("the release went through: nothing to report")
+	}
+	if f := w.footer(); !strings.Contains(f, "cancelled") || !strings.Contains(f, "couldn't release") {
+		t.Errorf("footer = %q, want the cancel and the failed release", f)
+	}
+	if w.ran("ran") {
+		t.Error("the command ran after the cancel")
+	}
+	if err := w.app.Close(); err != nil {
+		t.Errorf("Close reports a failure the footer showed: %v", err)
+	}
+
+	// The screens quit before the failed release's answer reached them:
+	// Close reports it.
+	w = newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	w.refuse.Store(&refuse)
+	w.send(keyPress("a"))
+	w.feedOne() // the task: the takeover runs, its answer waits
+	w.send(keyPress("esc"))
+	w.feedOne() // the takeover's answer: the hold is given back, which fails
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Fatal("no hold: nothing to give back")
+	}
+	var rel *attach.ReleaseError
+	if err := w.app.Close(); !errors.As(err, &rel) {
+		t.Errorf("Close = %v, want the failed release the screens didn't get to show", err)
+	}
+}
+
 // esc while the tmux window is being opened: a window that opened all
 // the same is closed again, so nothing attaches after the list said the
 // attach was cancelled.
@@ -644,6 +707,46 @@ func TestCloseReleasesAHoldNotYetAttached(t *testing.T) {
 	}
 }
 
+// A release that fails where the screens can't say so any more is Close's
+// to report: after a signal quit the screens during the attach, and for a
+// hold Close gives back itself.
+func TestCloseReportsAFailedRelease(t *testing.T) {
+	failed := &attach.ReleaseError{Err: errors.New("connection refused"), Expires: t0}
+	w := newAttachWorld(t, "inline", false)
+	w.send(attachedMsg{err: errors.Join(context.Canceled, failed), sig: syscall.SIGTERM})
+	var rel *attach.ReleaseError
+	if err := w.app.Close(); !errors.As(err, &rel) || rel != failed {
+		t.Errorf("Close after a SIGTERM whose release failed = %v, want that failure", err)
+	}
+
+	// The screens quit with a hold taken and not yet attached with, and
+	// its release fails.
+	w = newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusNotFound
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	w.send(keyPress("a"))
+	w.feedOne()
+	if err := w.app.Close(); !errors.As(err, &rel) || !strings.Contains(err.Error(), "expires") {
+		t.Errorf("Close with a hold it couldn't give back = %v, want a ReleaseError", err)
+	}
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Error("the release went through: nothing to report")
+	}
+
+	// Nothing failed: nothing to report.
+	w = newAttachWorld(t, "inline", false)
+	w.send(attachedMsg{err: context.Canceled, sig: syscall.SIGTERM})
+	if err := w.app.Close(); err != nil {
+		t.Errorf("Close after a clean release = %v", err)
+	}
+}
+
 // The screens quit while tmux was opening the window: a window that
 // opened is closed again, as a hold taken is given back.
 func TestCloseClosesAWindowNotYetShown(t *testing.T) {
@@ -750,6 +853,49 @@ func TestAttachEndedByASignal(t *testing.T) {
 	w.flush()
 	if f := w.frame(); !strings.Contains(w.footer(), "interrupted") || !strings.Contains(f, "fix the build") {
 		t.Errorf("after an interrupt:\n%s", f)
+	}
+}
+
+// An interrupt ends the attach, whose release then fails: the footer says
+// the hold is still held until its lease runs out, not that it was
+// released.
+func TestAttachInterruptedReportsAFailedRelease(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("started") + "; exec sleep 60")
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusNotFound
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	sent := make(chan error, 1)
+	go func() {
+		for !w.ran("started") {
+			time.Sleep(5 * time.Millisecond)
+		}
+		sent <- syscall.Kill(os.Getpid(), syscall.SIGINT)
+	}()
+	w.key("a")
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Fatal("the release went through: nothing to report")
+	}
+	f := w.footer()
+	if strings.Contains(f, "released") || !strings.Contains(f, "couldn't release") {
+		t.Errorf("footer = %q, want the failed release", f)
+	}
+	if !strings.Contains(f, "interrupted") {
+		t.Errorf("footer = %q, want it to say the attach was interrupted", f)
+	}
+
+	// The hold ended another way meanwhile: that is said, not a release.
+	w = newAttachWorld(t, "inline", false)
+	w.send(attachedMsg{err: &attach.EndedError{Reason: "taken_back"}, sig: os.Interrupt})
+	if f := w.footer(); strings.Contains(f, "released") || !strings.Contains(f, "taken back") {
+		t.Errorf("footer = %q, want how the hold ended", f)
 	}
 }
 

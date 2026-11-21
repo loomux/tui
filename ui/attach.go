@@ -135,6 +135,28 @@ func (o *opened) take() string {
 	return id
 }
 
+// failures keeps the releases that didn't reach the server until the
+// screens have said so, or, if they end first, Close has: the hold stays
+// until its lease runs out, which the person has to know.
+type failures struct {
+	mu  sync.Mutex
+	err error
+}
+
+func (f *failures) put(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = errors.Join(f.err, err)
+}
+
+func (f *failures) take() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	err := f.err
+	f.err = nil
+	return err
+}
+
 // dialog is text in the list's place: what an attach has to say that a
 // footer line can't hold. With yes it is a question: the yes key answers
 // it, any other key is a no. Without, it is text to read: the list's
@@ -167,6 +189,9 @@ type (
 		st  *starting
 		err error
 	}
+	// gaveBackMsg is the release of a hold taken for an attach that was
+	// cancelled. A failure is in App.unshown.
+	gaveBackMsg struct{}
 	// attachedMsg is the attach, over: the terminal is the screens' again.
 	attachedMsg struct {
 		res attach.Result
@@ -224,6 +249,10 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 		return a.gotTaken(msg)
 	case attachedMsg:
 		return a.gotAttached(msg)
+	case gaveBackMsg:
+		if err := a.unshown.take(); err != nil {
+			a.notice = "attach cancelled, but " + clean(err.Error())
+		}
 	}
 	return nil
 }
@@ -414,7 +443,8 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	})
 }
 
-// giveBack releases a hold taken for an attach that isn't happening.
+// giveBack releases a hold taken for an attach that isn't happening. A
+// release that fails is said in the footer.
 func (a *App) giveBack() tea.Cmd {
 	sess := a.held.take()
 	if sess == nil {
@@ -425,8 +455,10 @@ func (a *App) giveBack() tea.Cmd {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
-		_ = sess.Release(ctx) // unreleased, it expires by itself
-		return nil
+		if err := sess.Release(ctx); err != nil {
+			a.unshown.put(err) // for the footer, or for Close if the screens end first
+		}
+		return gaveBackMsg{}
 	}
 }
 
@@ -473,6 +505,13 @@ func (a *App) showAttachError(err error) {
 		a.dialog = &dialog{lines: lines}
 	case errors.As(err, &none) && len(none.Skipped) > 0:
 		lines := []string{"No attach command can be run from this machine. Nothing was taken.", ""}
+		var rel *attach.ReleaseError
+		if errors.As(err, &rel) {
+			// The commands came with a hold, which couldn't be given back.
+			why := rel.Error()
+			lines = []string{"No attach command can be run from this machine.", "",
+				strings.ToUpper(why[:1]) + why[1:] + ".", ""}
+		}
 		for _, s := range none.Skipped {
 			lines = append(lines, "  "+s.Line, "    "+s.Reason, "")
 		}
@@ -487,14 +526,28 @@ func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
 		a.settle(st)
 	}
 	// A signal while the attach had the terminal ended the attach, which
-	// released the hold on its way out. An interrupt is the person's
-	// ctrl+c at the command (ssh asking for a password): the list is
-	// back. Any other told the client itself to stop.
+	// released the hold on its way out, or says why it couldn't. An
+	// interrupt is the person's ctrl+c at the command (ssh asking for a
+	// password): the list is back. Any other told the client itself to
+	// stop.
+	var rel *attach.ReleaseError
 	if msg.sig != nil && msg.sig != os.Interrupt {
+		// A release that failed on the way out is said once the screens
+		// have ended: Close returns it.
+		if errors.As(msg.err, &rel) {
+			a.unshown.put(rel)
+		}
 		a.quitting = true
 		return tea.Quit
 	}
 	switch {
+	case msg.sig != nil && errors.As(msg.err, &rel):
+		// The release after the interrupt didn't reach the server: the
+		// hold stays until its lease runs out.
+		a.notice = "attach interrupted: " + clean(rel.Error())
+	case msg.sig != nil && msg.err != nil && !errors.Is(msg.err, context.Canceled):
+		// Something else ended it too, such as the hold ending another way.
+		a.notice = "attach interrupted: " + clean(msg.err.Error())
 	case msg.sig != nil:
 		a.notice = "attach interrupted: the hold is released"
 	case msg.err != nil:
@@ -630,7 +683,11 @@ const closeWait = 5 * time.Second
 // its answer is the only way to learn the hold to give back. One still
 // unanswered then is abandoned; a hold it did take ends by itself when
 // its lease runs out.
-func (a *App) Close() {
+//
+// Its error is what the screens had no chance to say: a release that
+// didn't reach the server (an *attach.ReleaseError), its own or that of
+// an attach a signal ended. That hold stays until its lease runs out.
+func (a *App) Close() error {
 	done := make(chan struct{})
 	go func() {
 		a.work.Wait()
@@ -649,10 +706,11 @@ func (a *App) Close() {
 	if st := a.starting; st != nil {
 		a.settle(st)
 	}
+	errs := []error{a.unshown.take()}
 	if sess := a.held.take(); sess != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
-		_ = sess.Release(ctx) // unreleased, it expires by itself
+		errs = append(errs, sess.Release(ctx))
 	}
 	// A tmux window that opened and that the list never got to show:
 	// closed again, like an attach cancelled while it opened.
@@ -661,6 +719,7 @@ func (a *App) Close() {
 		defer cancel()
 		_ = a.closeWindow(ctx, id)
 	}
+	return errors.Join(errs...)
 }
 
 // attachExec is the attach routine as Bubble Tea runs it with the

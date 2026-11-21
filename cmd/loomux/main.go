@@ -52,11 +52,12 @@ func main() {
 }
 
 // runUI runs the screens until they quit; tests replace it.
-var runUI = func(o ui.Options) error {
+var runUI = func(o ui.Options) (err error) {
 	app := ui.New(o)
-	// A hold taken for an attach the screens ended before is given back.
-	defer app.Close()
-	_, err := tea.NewProgram(app).Run()
+	// A hold taken for an attach the screens ended before is given back. A
+	// release that failed where the screens couldn't say so is the error.
+	defer func() { err = errors.Join(err, app.Close()) }()
+	_, err = tea.NewProgram(app).Run()
 	return err
 }
 

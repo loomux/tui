@@ -83,6 +83,7 @@ type App struct {
 	dialog      *dialog        // its question or text, in the list's place
 	held        held           // a hold taken and not yet attached with
 	window      opened         // a tmux window opened and not yet shown as such
+	unshown     failures       // releases that failed, not yet said
 	work        sync.WaitGroup // requests that may leave a hold behind: Close waits for them
 }
 
