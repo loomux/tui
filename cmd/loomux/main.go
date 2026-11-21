@@ -136,13 +136,43 @@ func attachFromList(c *client.Client, cfg *config.Config, p config.Profile) *ui.
 	if exe, err := os.Executable(); err == nil {
 		at.Window = []string{exe, "attach", "--profile", p.Name, "--keep-open"}
 	}
-	// A tmux window starts from the tmux server's environment, not this
-	// program's: what chooses the server, the config and the token store
-	// here has to reach it by name. One that is unset here is given
-	// empty, which each of the three reads as unset: the tmux server's
-	// own value, from wherever it was started, isn't the window's.
-	for _, name := range []string{"LOOMUX_SERVER", "XDG_CONFIG_HOME", "XDG_STATE_HOME"} {
-		at.WindowEnv = append(at.WindowEnv, name+"="+os.Getenv(name))
-	}
+	at.WindowEnv = windowEnv(os.Getenv)
 	return at
+}
+
+// windowEnv is the part of this program's environment that a tmux window
+// attaching for the list gets by name. A tmux window starts from the tmux
+// server's environment, from wherever that was started, not from this
+// program's; with these the window attaches as the list would here:
+//
+//   - what chooses the server, the config file and the token store
+//     (LOOMUX_SERVER, the XDG directories, HOME, and the session bus the
+//     keyring is reached on);
+//   - where the attach commands are found (PATH) and where they go
+//     (kubectl's KUBECONFIG, docker's DOCKER_HOST, DOCKER_CONTEXT and
+//     DOCKER_CONFIG).
+//
+// One of the first group of names that is unset here is given empty,
+// which each of them reads as unset, so the tmux server's own value isn't
+// used. The others are given only when set: an empty PATH isn't an unset
+// one.
+//
+// The rest stays tmux's: the terminal and the tmux the window is in, the
+// ssh agent (tmux keeps it current for its sessions), and everything
+// else. The whole environment isn't passed: tmux bounds the size of a
+// command.
+func windowEnv(getenv func(string) string) []string {
+	var env []string
+	for _, name := range []string{
+		"LOOMUX_SERVER", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "DBUS_SESSION_BUS_ADDRESS",
+		"KUBECONFIG", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
+	} {
+		env = append(env, name+"="+getenv(name))
+	}
+	for _, name := range []string{"HOME", "PATH", "XDG_RUNTIME_DIR"} {
+		if v := getenv(name); v != "" {
+			env = append(env, name+"="+v)
+		}
+	}
+	return env
 }

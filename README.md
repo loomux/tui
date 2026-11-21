@@ -220,7 +220,12 @@ The agent keeps running, and Loomux has it back.
   named for the workspace that runs `loomux attach` for the task. The
   window takes and releases the hold by itself and closes when you
   detach. The list stays up in its own window. If the window can't be
-  opened, the attach happens here.
+  opened, the attach happens here. The window gets the list's own
+  settings for the server, the config and the token store, its `PATH`,
+  and kubectl's and docker's (`KUBECONFIG`, `DOCKER_HOST`,
+  `DOCKER_CONTEXT`, `DOCKER_CONFIG`). The rest of its environment is
+  tmux's, as for any new window; if an attach command needs more of
+  your shell's, set `mode = "inline"`.
 
 What can't be attached to is said on screen. A task another client holds
 is named, with a question (`y` or `n`) before it is taken. A server that

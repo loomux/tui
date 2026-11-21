@@ -46,12 +46,14 @@ func TestListIsStartedWithAttach(t *testing.T) {
 	if want := []string{exe, "attach", "--profile", "prod", "--keep-open"}; !slices.Equal(at.Window, want) {
 		t.Errorf("the window's command = %q, want %q", at.Window, want)
 	}
-	// Each setting is given, also one that is unset here: the tmux
-	// server's own environment may have another value for it, which the
-	// window must not use.
-	want := []string{"LOOMUX_SERVER=", "XDG_CONFIG_HOME=" + os.Getenv("XDG_CONFIG_HOME"), "XDG_STATE_HOME=" + os.Getenv("XDG_STATE_HOME")}
-	if !slices.Equal(at.WindowEnv, want) {
-		t.Errorf("the window's environment = %q, want %q", at.WindowEnv, want)
+	// The settings that choose the server, the config and the token store
+	// are given, also one that is unset here: the tmux server's own
+	// environment may have another value for it, which the window must
+	// not use.
+	for _, want := range []string{"LOOMUX_SERVER=", "XDG_CONFIG_HOME=" + os.Getenv("XDG_CONFIG_HOME"), "XDG_STATE_HOME=" + os.Getenv("XDG_STATE_HOME")} {
+		if !slices.Contains(at.WindowEnv, want) {
+			t.Errorf("the window's environment %q has no %q", at.WindowEnv, want)
+		}
 	}
 
 	// Outside tmux, and with the server given in the environment: the
@@ -117,5 +119,53 @@ func TestAttachKeepOpen(t *testing.T) {
 	code, _, out := loomux("attach", "--keep-open", "--task", e.task.ID)
 	if code != 0 || strings.Contains(out, "enter") {
 		t.Errorf("after a detach: exit %d, stderr:\n%s", code, out)
+	}
+}
+
+// The window attaches with the list's settings: what chooses the server,
+// the config and the token store, and where the attach commands are
+// found and go. The rest of its environment is tmux's.
+func TestWindowEnv(t *testing.T) {
+	env := map[string]string{
+		"HOME":            "/home/someone",
+		"PATH":            "/opt/tools/bin:/usr/bin",
+		"LOOMUX_SERVER":   "https://loomux.example.net",
+		"XDG_CONFIG_HOME": "/home/someone/cfg",
+		"KUBECONFIG":      "/home/someone/.kube/lab",
+		"DOCKER_HOST":     "ssh://box.example.net",
+		"TERM":            "xterm-256color",
+		"TMUX":            "/tmp/tmux-1000/default,1,0",
+		"SSH_AUTH_SOCK":   "/tmp/ssh-agent.sock",
+		"LS_COLORS":       "di=01;34",
+	}
+	got := windowEnv(func(name string) string { return env[name] })
+	for _, want := range []string{
+		"HOME=/home/someone", "PATH=/opt/tools/bin:/usr/bin",
+		"LOOMUX_SERVER=https://loomux.example.net", "XDG_CONFIG_HOME=/home/someone/cfg",
+		"KUBECONFIG=/home/someone/.kube/lab", "DOCKER_HOST=ssh://box.example.net",
+		// Unset here: given empty, which each of these reads as unset.
+		"XDG_STATE_HOME=", "DOCKER_CONTEXT=", "DOCKER_CONFIG=", "DBUS_SESSION_BUS_ADDRESS=",
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("no %q in %q", want, got)
+		}
+	}
+	for _, kv := range got {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		// The terminal and the tmux the window is in are tmux's to say;
+		// so is the ssh agent, which tmux keeps current for its sessions.
+		case "TERM", "TMUX", "TMUX_PANE", "SSH_AUTH_SOCK", "LS_COLORS":
+			t.Errorf("%s is passed to the window", name)
+		}
+	}
+
+	// An empty PATH or HOME isn't an unset one: unset here, they are left
+	// to tmux.
+	got = windowEnv(func(string) string { return "" })
+	for _, kv := range got {
+		if strings.HasPrefix(kv, "PATH=") || strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "XDG_RUNTIME_DIR=") {
+			t.Errorf("%q is passed with nothing set", kv)
+		}
 	}
 }
