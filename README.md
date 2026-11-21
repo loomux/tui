@@ -14,9 +14,11 @@ the web client.
 ## Status
 
 **Pre-release, not usable yet.** So far there is `loomux version`, plus
-the config file and token stores that `loomux login` will use. Logging
-in, the list, chat and attach are added ticket by ticket, following the
-build plan in the design.
+the config file, the token stores that `loomux login` will use, the
+keymap and the list of conversations, from which (or with `loomux
+attach`) a terminal attaches to an agent, for a profile that already has
+a stored token. Logging in and chat are added ticket by ticket, following
+the build plan in the design.
 
 ## Design
 
@@ -54,6 +56,26 @@ bumping the pin (`go get github.com/Loomux/server@v0.3.N`), run
 `go generate ./...` to update `internal/version/serverpin.go`. A test fails
 if it doesn't match `go.mod`.
 
+## The list
+
+`loomux` with no command shows the conversations on the profile's
+server, attention-first, as the web does: what needs you (a blocked
+prompt, an agent waiting for your next message, a conversation driven
+from a terminal, an offer waiting for a yes), then what's running, then
+what's done, the newest first in each. A row shows the status, the
+workspace, the first message and how long ago it last changed.
+
+- `tab` shows only what needs you, what's running or what's done, then
+  all again.
+- `/` filters as you type: every word must be in the row's message,
+  workspace or status. `enter` keeps the filter, `esc` clears it.
+- `a` attaches to the conversation's agent: see
+  [Attaching to an agent](#attaching-to-an-agent).
+- `?` shows the keys in effect.
+
+The list polls the server every 5 seconds. It needs a token stored for
+the profile, which `loomux login` will store.
+
 ## Configuration
 
 The config file is `$XDG_CONFIG_HOME/loomux/config.toml`. Without
@@ -90,6 +112,155 @@ warn = true
   `~/.local/state/loomux/`), in a `0700` directory. A token file or
   directory with wider permissions is refused, not used. Every start
   warns that the token is in a plain file.
+
+### Keys
+
+Every key is an action with a vim-style default, and `[keys]` replaces
+any action's keys with a key or a list of keys:
+
+```toml
+[keys]
+attach = "A"
+send = "ctrl+s"
+cancel = ["x", "ctrl+c"]
+```
+
+Keys are written as Bubble Tea names them: a character (`a`, `A`, `?`),
+a named key (`enter`, `esc`, `tab`, `space`, `backspace`, `delete`,
+`up`, `pgdown`, `home`, `f1` to `f20`, …), or `ctrl+`, `alt+` or (with a
+named key) `shift+` before one. An unknown action, something that isn't
+a key, or two actions with the same key on one screen stops `loomux` at
+start with an error that names them. In the composer and the list's
+filter a key that types text types it, so `send`, `newline`, `cancel`,
+`back` and `apply` each need a `ctrl+`, `alt+` or named key. `choose`'s keys pick options 1, 2, 3… in order. `?` shows the keys
+in effect on the current screen.
+
+| Action | Default keys | Screens | What it does |
+|---|---|---|---|
+| `up` | `k` `up` | list, conversation, transcript, help | move up |
+| `down` | `j` `down` | list, conversation, transcript, help | move down |
+| `page_up` | `pgup` `ctrl+u` | list, conversation, transcript, help | page up |
+| `page_down` | `pgdown` `ctrl+d` | list, conversation, transcript, help | page down |
+| `top` | `g` `home` | list, conversation, transcript, help | go to the top |
+| `bottom` | `G` `end` | list, conversation, transcript, help | go to the bottom |
+| `open` | `enter` | list | open the conversation |
+| `back` | `esc` | list, conversation, composer, transcript, help, filter | back |
+| `filter` | `/` | list | filter |
+| `apply` | `enter` | filter | keep the filter |
+| `next_group` | `tab` | list | show needs you, running, done or all |
+| `new` | `n` | list | new conversation |
+| `attach` | `a` | list, conversation | attach to the agent |
+| `watch` | `w` | list, conversation | watch the agent (read-only) |
+| `browser` | `o` | list, conversation | open in the browser |
+| `transcript` | `p` | conversation | show the task's transcript |
+| `cancel` | `x` `ctrl+c` | conversation, composer | cancel the turn in flight |
+| `yes` | `y` | conversation | answer yes |
+| `no` | `n` | conversation | answer no |
+| `choose` | `1-9` | conversation | choose an option by its number |
+| `reply` | `r` | conversation | reply with text |
+| `send` | `enter` | composer | send |
+| `newline` | `alt+enter` | composer | new line |
+| `help` | `?` | list, conversation, transcript, help | help |
+| `quit` | `q` | list, conversation, transcript, help | quit |
+
+## Attaching to an agent
+
+`a` on a conversation in the list, or `loomux attach`, attaches a terminal
+to the conversation's agent: its own Claude Code or Codex screen, in its
+tmux session on the machine it runs on.
+
+```sh
+loomux attach CONVERSATION     # the conversation's open agent
+loomux attach --task TASK      # a task by its id
+```
+
+Detach with tmux's own `prefix d` (`C-b d` by default). Inside your own
+tmux, press the prefix twice so it reaches the agent's tmux: `C-b C-b d`.
+The agent keeps running, and Loomux has it back.
+
+- **Always under a hold.** Before it attaches, `loomux` takes a hold on
+  the task. The server then knows who is in the pane: the other clients
+  show it, and nothing automated types into the pane meanwhile. `loomux`
+  renews the hold every 15 seconds and releases it when the attach
+  command ends, also when a signal ends it. If `loomux` itself is killed,
+  the hold runs out within 45 seconds and the server detaches the
+  session; on Linux the attach command is hung up at once as well.
+- **A working agent.** Attaching to an agent in the middle of a turn ends
+  that turn for Loomux. What the agent finishes reaches the conversation
+  once you have detached.
+- **The command comes from the server:** `kubectl exec` or `docker exec`
+  for a machine a plugin made, `ssh` for a remote host, `tmux` itself for
+  a target on the server's own machine. `loomux` runs the first whose
+  program is on your `PATH`, as it is and never through a shell. So you
+  need what that command needs: your key on the host, a kubeconfig with
+  exec rights, or access to the Docker engine. If the command fails at
+  once (a non-zero exit within 2 seconds, or ssh's 255), `loomux` asks
+  whether to try the next one.
+- **Held by another client.** `loomux` says who has the task and asks
+  before taking it, because that detaches them. `--force` takes it
+  without asking.
+- **A hold that ends another way.** When the task is taken back from the
+  web, taken over from another terminal, or the hold runs out, `loomux`
+  ends the attach and says which: `your hold expired at 14:31; the
+  session was detached`.
+- **Nothing to run.** If this machine can run none of the server's
+  commands, `loomux` takes nothing and shows them with the reason. A
+  server from before holds can't attach yet: `loomux` shows its command
+  as text, to run by hand, and never runs it itself.
+- **A release that fails.** If the release can't reach the server,
+  `loomux` says so, and when the hold runs out by itself; the server
+  then hands the task back. Nothing says a hold was released that
+  wasn't: the list says it in its last line, or, when it is quitting,
+  once it has ended.
+
+### From the list
+
+`a` attaches in one of two ways:
+
+- **Here**, outside tmux: the list leaves the terminal to the attach
+  command and is back when you detach, with what happened in its last
+  line: `detached: the hold is released and the task is awaiting_input`,
+  or how the hold ended.
+- **In a tmux window of its own**, inside tmux: the list opens a window
+  named for the workspace that runs `loomux attach` for the task. The
+  window takes and releases the hold by itself and closes when you
+  detach. The list stays up in its own window. If the window can't be
+  opened, the attach happens here. The window gets the list's own
+  settings for the server, the config and the token store, its `PATH`,
+  and kubectl's and docker's (`KUBECONFIG`, `DOCKER_HOST`,
+  `DOCKER_CONTEXT`, `DOCKER_CONFIG`). The rest of its environment is
+  tmux's, as for any new window; if an attach command needs more of
+  your shell's, set `mode = "inline"`.
+
+What can't be attached to is said on screen. A task another client holds
+is named, with a question (`y` or `n`) before it is taken. A server that
+can't attach yet, and a machine that can run none of the commands, get
+the commands as text. `esc` stops an attach that is still starting.
+
+### Settings
+
+`[attach]` in the config file chooses how the list attaches and among the
+server's commands:
+
+```toml
+[attach]
+mode = "auto"                # auto: a tmux window inside tmux, else here
+                             # inline: always here; window: a tmux window
+prefer = ["ssh", "kubectl"]  # the ways in to use, the most preferred first
+
+[attach.kubectl]
+context = "my-cluster"       # adds --context to a kubectl command
+```
+
+Without `prefer`, every way in the server gives is tried in the server's
+order: the plugin's first, then ssh. With it, a way it leaves out isn't
+used.
+
+`loomux attach` exits 0 when you were attached and the hold was released,
+128 plus the signal's number when a signal ended it, 2 for a usage error
+and 1 for anything else. With `--keep-open` it waits for enter after a
+failure, and after `ctrl+c` when the hold couldn't be released, so that a
+window that closes with the command still shows why.
 
 ## License
 
