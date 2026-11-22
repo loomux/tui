@@ -5,8 +5,6 @@
 package contract
 
 import (
-	"errors"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +13,8 @@ import (
 )
 
 // usesFile lists the contract lines the client depends on, in the
-// contract file's own format. It arrives with the typed client in T3
-// (LOOM-282). Until then its absence passes; T3 makes it mandatory.
+// contract file's own format. It came with the typed client (T3,
+// LOOM-282).
 const usesFile = "../../client/testdata/uses.txt"
 
 // Every line of uses.txt is a line of the server's contract file. The
@@ -46,9 +44,6 @@ func TestUsesAreInServerContract(t *testing.T) {
 	}
 
 	uses, err := os.ReadFile(usesFile)
-	if errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("%s doesn't exist yet: it arrives with the typed client (T3, LOOM-282)", usesFile)
-	}
 	if err != nil {
 		t.Fatal(err)
 	}
