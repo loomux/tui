@@ -1,0 +1,24 @@
+ loomux · test · cc-hub · transcript of claude-code             ● live   ?=help
+ ── 12:03 ─────────────────────────────────────────────────────────────────────
+ sent
+   The ConversationPage test fails about one run in five on CI. Find out why
+   and fix it.
+ answer
+   The test raced the stream's first event. Fixed in
+    ConversationPage.test.tsx .
+ pane
+   │ ● Update(src/pages/ConversationPage.test.tsx)
+   │   ⎿  Updated with 6 additions and 3 removals
+   │
+   │ ● Bash(npm test -- ConversationPage --repeat 50)
+   │   ⎿  Tests  50 passed (50)
+   │
+   │ >
+
+
+
+
+
+
+
+ esc back  k/j scroll  q quit

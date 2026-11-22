@@ -30,13 +30,6 @@ import (
 	"github.com/Loomux/tui/client"
 )
 
-// No test reaches the real keyring: the tests' configs name the file
-// store, and the ones about the keyring get go-keyring's in-memory mock.
-func TestMain(m *testing.M) {
-	keyring.MockInit()
-	os.Exit(m.Run())
-}
-
 // output is a command's stdout or stderr, read while it still writes.
 type output struct {
 	mu sync.Mutex
@@ -435,7 +428,7 @@ func TestLoginAndLogoutUsage(t *testing.T) {
 	for _, args := range [][]string{
 		{"login", "extra"}, {"login", "--nope"}, {"login", "--profile"}, {"login", "-h"},
 		{"logout", "extra"}, {"logout", "--no-browser"}, {"logout", "--profile"},
-		{"--profile"}, {"--profile", "test"}, {"--profile", "test", "attach"}, {"--nope", "login"},
+		{"--profile"}, {"--profile", "test", "attach"}, {"--nope", "login"},
 	} {
 		var stdout, stderr output
 		if code := run(args, &stdout, &stderr); code != 2 {

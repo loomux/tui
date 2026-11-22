@@ -1,0 +1,15 @@
+ loomux · test · cc-hub                     ● live   ?=help
+
+     npm test -- ConversationPage --repeat 50
+
+   All 50 runs pass. See the stream's notes
+   https://example.net/docs/stream.
+
+ you · 12:08
+   Good. Run the nightly suite against it too.
+
+ ◐ working… since 12:08
+────────────────────────────────────────────────────────────
+ ◐ running          claude-code                       12:08
+ ▲ needs attention  codex  Bash command               12:06
+ esc back  p transcript  k/j scroll  q quit

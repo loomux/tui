@@ -26,6 +26,7 @@ func TestDefaults(t *testing.T) {
 		No:              {"n"},
 		Cancel:          {"x", "ctrl+c"},
 		Browser:         {"o"},
+		TakeBack:        {"T"},
 		Transcript:      {"p"},
 		Help:            {"?"},
 		Send:            {"enter"},
@@ -33,6 +34,7 @@ func TestDefaults(t *testing.T) {
 		Choose:          {"1", "2", "3", "4", "5", "6", "7", "8", "9"},
 		Reply:           {"r"},
 		NextGroup:       {"tab"},
+		Apply:           {"enter"},
 	}
 	for a, keys := range want {
 		if got := m.Keys(a); !slices.Equal(got, keys) {
@@ -91,6 +93,19 @@ func TestLookup(t *testing.T) {
 		{ListScreen, "nope", "", 0, false},
 		// Bubble Tea v1 reports the space bar as " ".
 		{ListScreen, " ", "", 0, false},
+		// The filter's input is a text input too: enter keeps the
+		// filter, esc drops it, and a key that types text types it.
+		{FilterScreen, "enter", Apply, 0, true},
+		{FilterScreen, "esc", Back, 0, true},
+		{FilterScreen, "q", "", 0, false},
+		{FilterScreen, "j", "", 0, false},
+		{FilterScreen, "?", "", 0, false},
+		{FilterScreen, "/", "", 0, false},
+		{ListScreen, "esc", Back, 0, true},
+		// Take back works on the list and in a conversation.
+		{ListScreen, "T", TakeBack, 0, true},
+		{ConversationScreen, "T", TakeBack, 0, true},
+		{ComposerScreen, "T", "", 0, false},
 	}
 	for _, c := range cases {
 		a, i, ok := m.Lookup(c.screen, c.key)
@@ -188,6 +203,11 @@ func TestNewErrors(t *testing.T) {
 			[]string{"keys.cancel", `"x"`, "types text"}},
 		{"back typing text in the composer", map[string][]string{"back": {"h", "space"}},
 			[]string{"keys.back", `"h", "space"`, "types text"}},
+		// The filter's input types text as the composer does.
+		{"apply typing text in the filter", map[string][]string{"apply": {"a"}},
+			[]string{"keys.apply", `"a"`, "types text in the filter", "apply works"}},
+		{"clash within the filter", map[string][]string{"apply": {"esc"}},
+			[]string{`"esc"`, "apply", "back", "filter"}},
 		{"shift with a character", map[string][]string{"attach": {"shift+a"}},
 			[]string{"keys.attach", `"A"`}},
 		{"several problems", map[string][]string{"atach": {"A"}, "watch": {"ctrl+"}},
@@ -336,7 +356,7 @@ func TestHelp(t *testing.T) {
 			t.Errorf("help shows attach as %q, want the override", b.Keys)
 		}
 	}
-	for _, a := range []Action{Up, Down, Open, Back, NewConversation, Attach, Watch, Filter, NextGroup, Browser, Help, Quit} {
+	for _, a := range []Action{Up, Down, Open, Back, NewConversation, Attach, Watch, Filter, NextGroup, Browser, TakeBack, Help, Quit} {
 		if !slices.Contains(names, a) {
 			t.Errorf("list help lacks %s: %v", a, names)
 		}
@@ -365,6 +385,24 @@ func TestHelpComposer(t *testing.T) {
 		if !strings.Contains(text, w) {
 			t.Errorf("composer help lacks %q:\n%s", w, text)
 		}
+	}
+}
+
+// The filter's help shows the keys that work while typing a filter.
+func TestHelpFilter(t *testing.T) {
+	var names []Action
+	for _, b := range Default().Help(FilterScreen) {
+		names = append(names, b.Action)
+	}
+	if !slices.Equal(names, []Action{Back, Apply}) {
+		t.Errorf("filter help = %v, want back and apply", names)
+	}
+}
+
+// The filter is a screen, so [keys] overrides reach it.
+func TestScreensHasFilter(t *testing.T) {
+	if !slices.Contains(Screens(), FilterScreen) {
+		t.Errorf("Screens() = %v lacks the filter", Screens())
 	}
 }
 

@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package browser
 
 import (
 	"os"
@@ -17,8 +17,10 @@ import (
 func fakeBrowser(t *testing.T) string {
 	t.Helper()
 	t.Setenv("DISPLAY", ":0")
-	name := browserCommand(runtime.GOOS, os.Getenv)
-	if name == "" {
+	t.Setenv("SSH_CONNECTION", "")
+	t.Setenv("SSH_TTY", "")
+	argv := Command(runtime.GOOS, os.Getenv, link)
+	if argv == nil {
 		t.Skip("no browser command on " + runtime.GOOS)
 	}
 	dir := t.TempDir()
@@ -29,18 +31,22 @@ sid=
 printf '%s\n%s\n%s\n%s\n' "$#" "$1" "$$" "$sid" > '` + record + `.part'
 mv '` + record + `.part' '` + record + `'
 `
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, argv[0]), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return record
 }
 
-func TestStartBrowser(t *testing.T) {
+// Open runs the browser command with the link as its one argument, in a
+// session of its own: ctrl+c at the terminal, which cancels a login, goes
+// to the terminal's foreground processes and mustn't take a browser that
+// was just started with it.
+func TestOpenRunsTheBrowser(t *testing.T) {
 	record := fakeBrowser(t)
 	const link = "https://loomux.example.net/link#h=abc&label=my+laptop"
-	if !startBrowser(link) {
-		t.Fatal("startBrowser = false, want the browser command started")
+	if err := Open(link); err != nil {
+		t.Fatalf("Open = %v, want the browser command started", err)
 	}
 	var lines []string
 	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(5 * time.Millisecond) {
@@ -55,18 +61,15 @@ func TestStartBrowser(t *testing.T) {
 	if len(lines) != 4 || lines[0] != "1" || lines[1] != link {
 		t.Fatalf("the browser command got %q, want the link as its one argument", lines)
 	}
-	// Its own session: ctrl+c at the terminal, which cancels the login,
-	// goes to the terminal's foreground processes and mustn't take a
-	// browser that was just started with it.
 	if runtime.GOOS == "linux" && lines[3] != lines[2] {
 		t.Errorf("the browser command ran in session %s as process %s, want a session of its own", lines[3], lines[2])
 	}
 }
 
-func TestStartBrowserWithNoneToStart(t *testing.T) {
+func TestOpenWithNoneToStart(t *testing.T) {
 	fakeBrowser(t)
 	t.Setenv("PATH", t.TempDir())
-	if startBrowser("https://loomux.example.net/link#h=abc") {
-		t.Error("startBrowser = true with no browser command on PATH")
+	if err := Open("https://loomux.example.net/link#h=abc"); err == nil {
+		t.Error("Open = nil with no browser command on PATH")
 	}
 }

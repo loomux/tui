@@ -13,6 +13,7 @@ import (
 
 	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/config"
+	"github.com/Loomux/tui/internal/browser"
 )
 
 // What login and logout take from the machine; tests replace them.
@@ -29,8 +30,8 @@ var (
 		return ctx, stop
 	}
 	// openBrowser opens the link in the user's browser and reports
-	// whether it started one.
-	openBrowser = startBrowser
+	// whether it started one: internal/browser, as the list's o does.
+	openBrowser = func(link string) bool { return browser.Open(link) == nil }
 	// hostname names this machine: the session's label.
 	hostname = os.Hostname
 	// linkInterval and linkTimeout are the link flow's wait: the
