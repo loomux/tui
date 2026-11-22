@@ -1,0 +1,24 @@
+ loomux · test                                      ● updated 12:00:00   ?=help 
+ Keys on the list
+   k/up           move up
+   j/down         move down
+   pgup/ctrl+u    page up
+   pgdown/ctrl+d  page down
+   g/home         go to the top
+   G/end          go to the bottom
+   enter          open the conversation
+   esc            back
+   /              filter
+   tab            show needs you, running, done or all
+   n              new conversation
+   a              attach to the agent
+   w              watch the agent (read-only)
+   o              open in the browser
+   ?              help
+   q              quit
+
+ While typing a filter (/)
+   esc    back
+   enter  keep the filter
+
+ esc back  q quit

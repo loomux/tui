@@ -14,10 +14,9 @@ the web client.
 ## Status
 
 **Pre-release, not usable yet.** So far there is `loomux version`, plus
-the config file, the token stores that `loomux login` will use and the
-keymap the screens will use. Logging
-in, the list, chat and attach are added ticket by ticket, following the
-build plan in the design.
+the config file, the token stores that `loomux login` will use, the
+keymap and the list of conversations. Logging in, chat and attach are
+added ticket by ticket, following the build plan in the design.
 
 ## Design
 
@@ -54,6 +53,24 @@ Only test files import it, and none of it is linked into the binary. After
 bumping the pin (`go get github.com/Loomux/server@v0.3.N`), run
 `go generate ./...` to update `internal/version/serverpin.go`. A test fails
 if it doesn't match `go.mod`.
+
+## The list
+
+`loomux` with no command shows the conversations on the profile's
+server, attention-first, as the web does: what needs you (a blocked
+prompt, an agent waiting for your next message, a conversation driven
+from a terminal, an offer waiting for a yes), then what's running, then
+what's done, the newest first in each. A row shows the status, the
+workspace, the first message and how long ago it last changed.
+
+- `tab` shows only what needs you, what's running or what's done, then
+  all again.
+- `/` filters as you type: every word must be in the row's message,
+  workspace or status. `enter` keeps the filter, `esc` clears it.
+- `?` shows the keys in effect.
+
+The list polls the server every 5 seconds. It needs a token stored for
+the profile, which `loomux login` will store.
 
 ## Configuration
 
@@ -109,9 +126,9 @@ a named key (`enter`, `esc`, `tab`, `space`, `backspace`, `delete`,
 `up`, `pgdown`, `home`, `f1` to `f20`, …), or `ctrl+`, `alt+` or (with a
 named key) `shift+` before one. An unknown action, something that isn't
 a key, or two actions with the same key on one screen stops `loomux` at
-start with an error that names them. In the composer a key that types
-text types it, so `send`, `newline`, `cancel` and `back` each need a
-`ctrl+`, `alt+` or named key. `choose`'s keys pick options 1, 2, 3… in order. `?` shows the keys
+start with an error that names them. In the composer and the list's
+filter a key that types text types it, so `send`, `newline`, `cancel`,
+`back` and `apply` each need a `ctrl+`, `alt+` or named key. `choose`'s keys pick options 1, 2, 3… in order. `?` shows the keys
 in effect on the current screen.
 
 | Action | Default keys | Screens | What it does |
@@ -123,8 +140,9 @@ in effect on the current screen.
 | `top` | `g` `home` | list, conversation, transcript, help | go to the top |
 | `bottom` | `G` `end` | list, conversation, transcript, help | go to the bottom |
 | `open` | `enter` | list | open the conversation |
-| `back` | `esc` | list, conversation, composer, transcript, help | back |
+| `back` | `esc` | list, conversation, composer, transcript, help, filter | back |
 | `filter` | `/` | list | filter |
+| `apply` | `enter` | filter | keep the filter |
 | `next_group` | `tab` | list | show needs you, running, done or all |
 | `new` | `n` | list | new conversation |
 | `attach` | `a` | list, conversation | attach to the agent |
