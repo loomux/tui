@@ -102,3 +102,19 @@ messages or PR text. Use `example.net` / `example.org` hosts in examples.
   Bubbles, Lip Gloss, Glamour) arrives with the first UI ticket.
 - Standard engineering workflow applies (TDD, etc.). Don't reopen decisions
   the design settled without a concrete reason found while building.
+
+## Go on the shared laptop
+
+Several agent sessions share the development laptop (2026-11-19: 27/29 GiB
+swap), so run every `go` command there bounded, in a clean env with short
+temp paths (`GOWORK=off` unless you use a local `go.work`):
+
+```sh
+mkdir -p "$HOME/.cache/gotmp" "$HOME/.lt"
+env -i HOME="$HOME" PATH="$PATH" GOTMPDIR="$HOME/.cache/gotmp" TMPDIR="$HOME/.lt" \
+    GOTOOLCHAIN=local GOWORK=off GOFLAGS=-p=2 GOMAXPROCS=4 CI=1 go test -race ./...
+```
+
+- `CI=1` for the test gate: `internal/tmuxtest` (T8) fails without tmux.
+- The full `go test -race ./...` only at the baseline and at the end;
+  never two full suites at once.
