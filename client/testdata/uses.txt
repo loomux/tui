@@ -30,6 +30,16 @@ GET /api/v1/conversations response-header Content-Type
 GET /api/v1/conversations status 200
 GET /api/v1/conversations status 401
 
+GET /api/v1/workspaces
+GET /api/v1/workspaces request-header Authorization
+GET /api/v1/workspaces response - object
+GET /api/v1/workspaces response .workspaces []object
+GET /api/v1/workspaces response .workspaces[].id string
+GET /api/v1/workspaces response .workspaces[].name string
+GET /api/v1/workspaces response-header Content-Type
+GET /api/v1/workspaces status 200
+GET /api/v1/workspaces status 401
+
 GET /api/v1/conversations/{id}
 GET /api/v1/conversations/{id} query before
 GET /api/v1/conversations/{id} query limit
@@ -319,6 +329,9 @@ POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.session_id strin
 POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.task_id string
 POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.ttl_seconds number
 POST /api/v1/tasks/{id}/takeover/heartbeat status 200
+POST /api/v1/tasks/{id}/takeover/heartbeat status 401
+POST /api/v1/tasks/{id}/takeover/heartbeat status 403
+POST /api/v1/tasks/{id}/takeover/heartbeat status 404
 POST /api/v1/tasks/{id}/takeover/heartbeat status 410
 
 POST /api/v1/tasks/{id}/release

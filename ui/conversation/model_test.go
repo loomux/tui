@@ -873,12 +873,12 @@ func TestQuitQuitsAndEndsTheStream(t *testing.T) {
 }
 
 func TestKeysAreTheEffectiveKeymaps(t *testing.T) {
-	keys, err := keymap.New(map[string][]string{"back": {"ctrl+b"}, "transcript": {"T"}})
+	keys, err := keymap.New(map[string][]string{"back": {"ctrl+b"}, "transcript": {"P"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := opened(t, fixture(), func(o *Options) { o.Keys = keys })
-	h.has("ctrl+b back", "T transcript")
+	h.has("ctrl+b back", "P transcript")
 	h.lacks("esc back")
 
 	h.key("esc")

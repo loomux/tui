@@ -10,6 +10,7 @@
    a              attach to the agent
    w              watch the agent (read-only)
    o              open in the browser
+   T              take it back from the terminal driving it
    p              show the task's transcript
    x/ctrl+c       cancel the turn in flight
    y              answer yes
@@ -18,7 +19,6 @@
    r              reply with text
    ?              help
    q              quit
-
 
 
  esc back  q quit
