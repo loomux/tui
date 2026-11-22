@@ -12,6 +12,10 @@
 //	server = "https://loomux.example.org"
 //	warn = true
 //
+//	[keys]
+//	attach = "A"
+//	cancel = ["x", "ctrl+c"]
+//
 // The config never holds a token: token_store only chooses where the
 // token is kept (package auth).
 package config
@@ -29,6 +33,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/Loomux/tui/config/keymap"
 )
 
 // The token stores (token_store).
@@ -47,8 +53,11 @@ type Config struct {
 	TokenStore     string                   `toml:"token_store"`
 	Profiles       map[string]ProfileConfig `toml:"profiles"`
 	Attach         Attach                   `toml:"attach"`
-	// Keys maps action names to keys. T14 (the keymap) validates it.
-	Keys map[string]string `toml:"keys"`
+	// Keys is the [keys] table: action names and the keys that replace
+	// their defaults.
+	Keys Keys `toml:"keys"`
+	// Keymap is the effective keymap: the defaults with Keys applied.
+	Keymap *keymap.Map `toml:"-"`
 
 	// Path is the file the config was read from ("" for Parse).
 	Path string `toml:"-"`
@@ -61,6 +70,55 @@ type ProfileConfig struct {
 	// Warn marks a production profile: a coloured header, and send,
 	// attach, watch and take back ask first (T15).
 	Warn bool `toml:"warn"`
+}
+
+// Keys is the [keys] table: action name → keys. In the file each entry
+// is a key (attach = "A") or a list of keys (cancel = ["x", "ctrl+c"]).
+type Keys map[string][]string
+
+// UnmarshalTOML reads the [keys] table. Its errors name the entry, never
+// its value.
+func (k *Keys) UnmarshalTOML(v any) error {
+	t, ok := v.(map[string]any)
+	if !ok {
+		return errors.New("keys: a table of action = key")
+	}
+	names := make([]string, 0, len(t))
+	for name := range t {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make(Keys, len(t))
+	for _, name := range names {
+		if isTokenKey(toml.Key{name}) {
+			return fmt.Errorf("keys.%s: the config never holds a token: remove it (`loomux login` keeps the token in the token store)", name)
+		}
+		keys, ok := keyList(t[name])
+		if !ok {
+			return fmt.Errorf(`keys.%s: give a key ("A") or a list of keys (["x", "ctrl+c"])`, name)
+		}
+		out[name] = keys
+	}
+	*k = out
+	return nil
+}
+
+func keyList(v any) ([]string, bool) {
+	switch v := v.(type) {
+	case string:
+		return []string{v}, true
+	case []any:
+		keys := make([]string, 0, len(v))
+		for _, e := range v {
+			s, ok := e.(string)
+			if !ok {
+				return nil, false
+			}
+			keys = append(keys, s)
+		}
+		return keys, true
+	}
+	return nil, false
 }
 
 // Attach is the [attach] table, used by attach (T8, T9).
@@ -212,6 +270,11 @@ func (c *Config) check() error {
 			return fmt.Errorf("default_profile %q isn't a [profiles.%s] table", c.DefaultProfile, c.DefaultProfile)
 		}
 	}
+	km, err := keymap.New(c.Keys)
+	if err != nil {
+		return err
+	}
+	c.Keymap = km
 	return nil
 }
 

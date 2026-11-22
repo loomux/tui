@@ -5,8 +5,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Loomux/tui/config/keymap"
 )
 
 func env(m map[string]string) func(string) string {
@@ -79,8 +82,25 @@ func TestParseFull(t *testing.T) {
 	if c.Attach.Mode != "auto" || strings.Join(c.Attach.Prefer, ",") != "kubectl,ssh,docker" {
 		t.Errorf("attach = %+v", c.Attach)
 	}
-	if c.Keys["send"] != "ctrl+s" || c.Keys["attach"] != "A" {
+	if !slices.Equal(c.Keys["send"], []string{"ctrl+s"}) || !slices.Equal(c.Keys["attach"], []string{"A"}) {
 		t.Errorf("keys = %v", c.Keys)
+	}
+	if got := c.Keymap.Keys(keymap.Attach); !slices.Equal(got, []string{"A"}) {
+		t.Errorf("keymap attach = %q, want the [keys] override", got)
+	}
+}
+
+// A [keys] entry is a key or a list of keys.
+func TestParseKeys(t *testing.T) {
+	c, err := Parse([]byte("[keys]\ncancel = [\"x\", \"ctrl-c\"]\nnew = \"N\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Keymap.Keys(keymap.Cancel); !slices.Equal(got, []string{"x", "ctrl+c"}) {
+		t.Errorf("cancel = %q", got)
+	}
+	if a, _, ok := c.Keymap.Lookup(keymap.ListScreen, "N"); !ok || a != keymap.NewConversation {
+		t.Errorf(`"N" on the list = %q, %v`, a, ok)
 	}
 }
 
@@ -97,6 +117,11 @@ func TestParseDefaults(t *testing.T) {
 	}
 	if len(c.Profiles) != 0 {
 		t.Errorf("profiles = %v", c.Profiles)
+	}
+	for _, a := range keymap.Actions() {
+		if !slices.Equal(c.Keymap.Keys(a), keymap.Default().Keys(a)) {
+			t.Errorf("keymap %s = %q, want the default", a, c.Keymap.Keys(a))
+		}
 	}
 }
 
@@ -131,6 +156,15 @@ func TestParseErrors(t *testing.T) {
 		{"default_profile not defined", "default_profile = \"prod\"\n[profiles.test]\nserver = \"https://example.net\"\n", `default_profile "prod"`},
 		{"bad attach mode", "[attach]\nmode = \"tab\"\n", `attach.mode "tab"`},
 		{"wrong type", `token_store = 1`, "config"},
+		// [keys] is checked at start (T14).
+		{"unknown action", "[keys]\natach = \"A\"\n", "keys.atach: unknown action"},
+		{"two actions, one key", "[keys]\nnew = \"a\"\n", `"a" is both`},
+		{"not a key", "[keys]\nattach = \"ctrl+\"\n", "keys.attach"},
+		{"a key of the wrong type", "[keys]\nattach = 1\n", "keys.attach: give a key"},
+		{"a list of the wrong type", "[keys]\nattach = [\"a\", 1]\n", "keys.attach: give a key"},
+		{"a table in keys", "[keys.attach]\nkey = \"a\"\n", "keys.attach: give a key"},
+		{"a token in keys", "[keys]\ntoken = \"tok-secret\"\n", "never holds a token"},
+		{"a token-named action", "[keys]\napi_token = [\"tok-secret\"]\n", "never holds a token"},
 	} {
 		_, err := Parse([]byte(tc.toml))
 		if err == nil {
