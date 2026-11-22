@@ -130,7 +130,9 @@ var ErrOver = errors.New("this attach is over and its hold released: take the ta
 // holder's hold, to ask about Force; client.CodeTaskInactive;
 // client.CodeDetachFailed; a 404 for an unknown task), a
 // *NoCommandError, and an *UnsupportedError from a server without the
-// takeover route. In every case nothing is held when it returns one.
+// takeover route. In every case nothing is held when it returns one,
+// unless a hold it took and gave back couldn't be released: its error is
+// then also a *ReleaseError, and that hold ends when its lease runs out.
 func Take(ctx context.Context, api API, taskID string, o Options) (*Session, error) {
 	return take(ctx, api, taskID, o, nil)
 }
@@ -181,8 +183,11 @@ func take(ctx context.Context, api API, taskID string, o Options, tune func(*Ses
 	// A drive was asked for. Whatever else the server granted isn't what
 	// the person is about to do in the pane: give it back.
 	if m := tk.Hold.Mode; m != "" && m != client.ModeDrive {
-		err := fmt.Errorf("the server answered a request to drive with a %s hold: it was given back and nothing was attached", Clean(m))
-		return nil, errors.Join(err, s.Release(ctx))
+		answered := "the server answered a request to drive with a " + Clean(m) + " hold"
+		if err := s.Release(ctx); err != nil {
+			return nil, errors.Join(errors.New(answered+": nothing was attached"), err)
+		}
+		return nil, errors.New(answered + ": it was given back and nothing was attached")
 	}
 	// The commands to run are the ones the hold came with.
 	s.Plan = ch.plan(ctx, &s.Info, o.Config)
@@ -200,8 +205,9 @@ type Terminal struct {
 	In       io.Reader
 	Out, Err io.Writer
 	// Offer asks the person whether to try next after failed failed fast.
-	// It is called with the hold still held. Without one, the next
-	// command is tried.
+	// It is called with the hold still held, and must return when its
+	// context ends (Ask does): the question is moot then. Without one,
+	// the next command is tried.
 	Offer func(ctx context.Context, failed Attempt, next Command) bool
 }
 
@@ -438,8 +444,13 @@ func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Co
 	if t.Offer == nil {
 		return true
 	}
+	// The question's own context ends when the question is moot, and the
+	// question is waited for: nothing is left reading the terminal when
+	// Run returns.
+	asking, moot := context.WithCancel(ctx)
+	defer moot()
 	answer := make(chan bool, 1)
-	go func() { answer <- t.Offer(ctx, failed, next) }()
+	go func() { answer <- t.Offer(asking, failed, next) }()
 	select {
 	case yes := <-answer:
 		return yes && ctx.Err() == nil && s.beat.goneErr() == nil && !s.isOver()
@@ -447,6 +458,8 @@ func (s *Session) offer(ctx context.Context, t Terminal, failed Attempt, next Co
 	case <-s.beat.gone:
 	case <-s.over:
 	}
+	moot()
+	<-answer
 	return false
 }
 

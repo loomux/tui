@@ -879,11 +879,20 @@ func TestReleaseDuringTheOfferEndsIt(t *testing.T) {
 			t.Errorf("Release: %v", err)
 		}
 	}()
+	left := make(chan struct{})
 	_, err = s.Run(ctx(t), Terminal{Offer: func(c context.Context, _ Attempt, _ Command) bool {
 		close(asked)
 		<-c.Done() // a person who never answers
+		close(left)
 		return true
 	}})
+	// The question was told to end, and had ended when Run returned: it
+	// isn't still reading the terminal.
+	select {
+	case <-left:
+	default:
+		t.Error("Run returned with the question still up")
+	}
 	<-released
 	var failed *FailedError
 	if !errors.As(err, &failed) || exists(w.file("second-ran"))() {
@@ -982,6 +991,17 @@ func TestTakeRefusesAHoldThatIsNotADrive(t *testing.T) {
 	}
 	if h := w.srv.ActiveHold(w.task.ID); h != nil {
 		t.Errorf("the hold wasn't given back: %+v", h)
+	}
+
+	// It can't be given back: the error says so, and not that it was.
+	defer w.answer(http.StatusNotFound, "/release")()
+	_, err = Take(ctx(t), api, w.task.ID, Options{})
+	var rel *ReleaseError
+	if !errors.As(err, &rel) || strings.Contains(err.Error(), "given back") {
+		t.Errorf("err = %v, want the failed release and no word of a give-back", err)
+	}
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Error("the release went through: nothing to report")
 	}
 }
 

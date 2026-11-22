@@ -15,10 +15,10 @@ the web client.
 
 **Pre-release, not usable yet.** So far there is `loomux version`, plus
 the config file, the token stores that `loomux login` will use, the
-keymap and the list of conversations. `loomux attach` attaches a terminal
-to an agent, for a profile that already has a stored token. Logging in
-and chat are added ticket by ticket, following the build plan in the
-design.
+keymap and the list of conversations, from which (or with `loomux
+attach`) a terminal attaches to an agent, for a profile that already has
+a stored token. Logging in and chat are added ticket by ticket, following
+the build plan in the design.
 
 ## Design
 
@@ -69,6 +69,8 @@ workspace, the first message and how long ago it last changed.
   all again.
 - `/` filters as you type: every word must be in the row's message,
   workspace or status. `enter` keeps the filter, `esc` clears it.
+- `a` attaches to the conversation's agent: see
+  [Attaching to an agent](#attaching-to-an-agent).
 - `?` shows the keys in effect.
 
 The list polls the server every 5 seconds. It needs a token stored for
@@ -163,9 +165,9 @@ in effect on the current screen.
 
 ## Attaching to an agent
 
-`loomux attach` attaches this terminal to a conversation's agent: its own
-Claude Code or Codex screen, in its tmux session on the machine it runs
-on.
+`a` on a conversation in the list, or `loomux attach`, attaches a terminal
+to the conversation's agent: its own Claude Code or Codex screen, in its
+tmux session on the machine it runs on.
 
 ```sh
 loomux attach CONVERSATION     # the conversation's open agent
@@ -205,11 +207,45 @@ The agent keeps running, and Loomux has it back.
   commands, `loomux` takes nothing and shows them with the reason. A
   server from before holds can't attach yet: `loomux` shows its command
   as text, to run by hand, and never runs it itself.
+- **A release that fails.** If the release can't reach the server,
+  `loomux` says so, and when the hold runs out by itself; the server
+  then hands the task back. Nothing says a hold was released that
+  wasn't: the list says it in its last line, or, when it is quitting,
+  once it has ended.
 
-`[attach]` in the config file chooses among the server's commands:
+### From the list
+
+`a` attaches in one of two ways:
+
+- **Here**, outside tmux: the list leaves the terminal to the attach
+  command and is back when you detach, with what happened in its last
+  line: `detached: the hold is released and the task is awaiting_input`,
+  or how the hold ended.
+- **In a tmux window of its own**, inside tmux: the list opens a window
+  named for the workspace that runs `loomux attach` for the task. The
+  window takes and releases the hold by itself and closes when you
+  detach. The list stays up in its own window. If the window can't be
+  opened, the attach happens here. The window gets the list's own
+  settings for the server, the config and the token store, its `PATH`,
+  and kubectl's and docker's (`KUBECONFIG`, `DOCKER_HOST`,
+  `DOCKER_CONTEXT`, `DOCKER_CONFIG`). The rest of its environment is
+  tmux's, as for any new window; if an attach command needs more of
+  your shell's, set `mode = "inline"`.
+
+What can't be attached to is said on screen. A task another client holds
+is named, with a question (`y` or `n`) before it is taken. A server that
+can't attach yet, and a machine that can run none of the commands, get
+the commands as text. `esc` stops an attach that is still starting.
+
+### Settings
+
+`[attach]` in the config file chooses how the list attaches and among the
+server's commands:
 
 ```toml
 [attach]
+mode = "auto"                # auto: a tmux window inside tmux, else here
+                             # inline: always here; window: a tmux window
 prefer = ["ssh", "kubectl"]  # the ways in to use, the most preferred first
 
 [attach.kubectl]
@@ -222,7 +258,9 @@ used.
 
 `loomux attach` exits 0 when you were attached and the hold was released,
 128 plus the signal's number when a signal ended it, 2 for a usage error
-and 1 for anything else.
+and 1 for anything else. With `--keep-open` it waits for enter after a
+failure, and after `ctrl+c` when the hold couldn't be released, so that a
+window that closes with the command still shows why.
 
 ## License
 

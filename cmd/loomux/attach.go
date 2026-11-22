@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 
 	"golang.org/x/term"
@@ -41,6 +39,7 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 	profile := fs.String("profile", "", "")
 	task := fs.String("task", "", "")
 	force := fs.Bool("force", false, "")
+	keepOpen := fs.Bool("keep-open", false, "")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -57,7 +56,7 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	ctx, signalled, stop := withSignals(context.Background())
+	ctx, signalled, stop := attach.Signals(context.Background())
 	defer stop()
 	err := runAttach(ctx, *profile, *task, id, *force, stdout, stderr)
 	if sig := signalled(); sig != nil {
@@ -65,6 +64,13 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 		var rel *attach.ReleaseError
 		if errors.As(err, &rel) {
 			fmt.Fprintf(stderr, "loomux: %v\n", rel)
+			if *keepOpen && sig == os.Interrupt {
+				// ctrl+c in a window that closes with this command: the
+				// hold still held stays on screen until read. Told to stop
+				// (SIGTERM) or with the window gone (SIGHUP), it doesn't
+				// wait. Another ctrl+c ends it at once (attach.Signals).
+				attach.Pause(context.Background(), stdin, stderr, "Press enter to close this window.")
+			}
 		}
 		if n, ok := sig.(syscall.Signal); ok {
 			return 128 + int(n)
@@ -73,6 +79,11 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 	}
 	if err != nil {
 		explain(stderr, err)
+		if *keepOpen {
+			// In a tmux window of its own, which closes with this
+			// command: the reason stays until it has been read.
+			attach.Pause(ctx, stdin, stderr, "Press enter to close this window.")
+		}
 		return 1
 	}
 	return 0
@@ -98,8 +109,8 @@ func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdo
 	if errors.As(err, &held) && held.Code == client.CodeTaskHeld && !opts.Force {
 		// Another session has the task: taking it detaches that client,
 		// so it is the person's call.
-		fmt.Fprintln(stderr, heldLine(held.Hold))
-		if !ask(ctx, stdin, stderr, "Take it over? That client is detached.", false) {
+		fmt.Fprintln(stderr, attach.HeldLine(held.Hold))
+		if !attach.Ask(ctx, stdin, stderr, "Take it over? That client is detached.", false) {
 			return errors.New("left with its holder: nothing was taken")
 		}
 		opts.Force = true
@@ -111,7 +122,7 @@ func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdo
 
 	res, err := sess.Run(ctx, attach.Terminal{In: stdin, Out: stdout, Err: stderr,
 		Offer: func(ctx context.Context, _ attach.Attempt, next attach.Command) bool {
-			return ask(ctx, stdin, stderr, fmt.Sprintf("Try %s (%s)?", next.Via, next), true)
+			return attach.Ask(ctx, stdin, stderr, fmt.Sprintf("Try %s (%s)?", next.Via, next), true)
 		}})
 	if err != nil {
 		return err
@@ -179,30 +190,6 @@ func taskFor(ctx context.Context, c *client.Client, id string) (string, error) {
 	return task.ID, nil
 }
 
-// heldLine names who holds a task.
-func heldLine(h *client.Hold) string {
-	if h == nil {
-		return "the task is held by another client"
-	}
-	from := "another client"
-	switch h.ClientKind {
-	case "tui":
-		from = "the terminal"
-	case "web":
-		from = "the web"
-	case "app":
-		from = "the app"
-	}
-	line := "the task is being driven from " + from
-	if label := attach.Clean(h.ClientLabel); label != "" {
-		line += " on " + label
-	}
-	if !h.AcquiredAt.IsZero() {
-		line += " since " + h.AcquiredAt.Local().Format("15:04")
-	}
-	return line
-}
-
 // explain prints why an attach failed, with the server's commands as
 // text where the person may want to run one by hand.
 func explain(stderr io.Writer, err error) {
@@ -226,93 +213,5 @@ func explain(stderr io.Writer, err error) {
 		fmt.Fprintf(stderr, "loomux: the server refused the stored token (%v): sign in again with loomux login\n", err)
 	default:
 		fmt.Fprintf(stderr, "loomux: %v\n", err)
-	}
-}
-
-// ask puts a yes/no question and reads one line of answer: y or yes,
-// n or no, or nothing for def. Anything else is a no, and so is no
-// answer at all: the input is gone, or ctx was cancelled (a signal)
-// while the question stood. It reads its line and nothing after it: the
-// rest is the next command's.
-func ask(ctx context.Context, in io.Reader, out io.Writer, question string, def bool) bool {
-	hint := " [y/N] "
-	if def {
-		hint = " [Y/n] "
-	}
-	fmt.Fprint(out, question+hint)
-	// A read of a terminal can't be interrupted, so it gets a goroutine
-	// of its own, left behind if ctx ends first: the client is then on
-	// its way out.
-	answer := make(chan bool, 1)
-	go func() { answer <- readAnswer(in, def) }()
-	select {
-	case yes := <-answer:
-		return yes
-	case <-ctx.Done():
-		fmt.Fprintln(out)
-		return false
-	}
-}
-
-func readAnswer(in io.Reader, def bool) bool {
-	var line []byte
-	for b := make([]byte, 1); ; {
-		n, err := in.Read(b)
-		if n == 1 {
-			if b[0] == '\n' {
-				break
-			}
-			line = append(line, b[0])
-		}
-		if len(line) > 256 || (err != nil && len(line) == 0) {
-			return false
-		}
-		if err != nil {
-			break
-		}
-	}
-	switch strings.ToLower(strings.TrimSpace(string(line))) {
-	case "":
-		return def
-	case "y", "yes":
-		return true
-	}
-	return false
-}
-
-// withSignals returns a context that the first SIGINT, SIGTERM or SIGHUP
-// cancels, so that the attach ends its command and releases the hold
-// before the client exits, and what reports that signal. A second signal
-// isn't caught: it ends the client at once, and the hold then expires by
-// itself.
-func withSignals(parent context.Context) (ctx context.Context, signalled func() os.Signal, stop func()) {
-	ctx, cancel := context.WithCancel(parent)
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	var (
-		mu  sync.Mutex
-		got os.Signal
-	)
-	done := make(chan struct{})
-	go func() {
-		select {
-		case sig := <-ch:
-			mu.Lock()
-			got = sig
-			mu.Unlock()
-			signal.Stop(ch)
-			cancel()
-		case <-done:
-		}
-	}()
-	signalled = func() os.Signal {
-		mu.Lock()
-		defer mu.Unlock()
-		return got
-	}
-	return ctx, signalled, func() {
-		signal.Stop(ch)
-		close(done)
-		cancel()
 	}
 }
