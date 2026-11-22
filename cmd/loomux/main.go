@@ -1,8 +1,9 @@
 // Command loomux is the terminal client for Loomux.
 //
 // With no command it shows the attention-first list of conversations for
-// the selected profile. version prints the client's version. Login,
-// logout, attach, open and the other screens come in later tickets.
+// the selected profile. version prints the client's version, and attach
+// attaches this terminal to an agent's tmux session under a hold. Login,
+// logout, open and the other screens come in later tickets.
 package main
 
 import (
@@ -23,12 +24,22 @@ import (
 
 const usage = `usage: loomux [--profile NAME]
        loomux version
+       loomux attach [--profile NAME] [--force] <conversation|task>
+       loomux attach [--profile NAME] [--force] --task ID
 
   (no command)  the list of conversations, on the profile's server
   version       print the client version and the server release it is pinned to
+  attach        attach this terminal to a conversation's agent, in its tmux
+                session, and hand the agent back when you detach. Meanwhile
+                the server knows who is in the pane, and types nothing
+                into it.
 
   --profile NAME  the config's profile to use (else LOOMUX_PROFILE, else
                   default_profile); LOOMUX_SERVER overrides its server URL
+  --force         take the task from another client that holds it,
+                  without asking
+  --task ID       the id is a task's (otherwise a conversation's is
+                  tried first)
 `
 
 func main() {
@@ -42,11 +53,14 @@ var runUI = func(o ui.Options) error {
 }
 
 // run executes one invocation and returns its exit status: 0 on success,
-// 1 when it fails, 2 for a usage error.
+// 1 when it fails, 2 for a usage error, and attach's own (attachMain).
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && args[0] == "version" {
 		fmt.Fprintf(stdout, "loomux %s\nserver pin %s\n", version.Client(), version.ServerPin)
 		return 0
+	}
+	if len(args) > 0 && args[0] == "attach" {
+		return attachMain(args[1:], stdout, stderr)
 	}
 	fs := flag.NewFlagSet("loomux", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

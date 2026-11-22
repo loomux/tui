@@ -329,6 +329,9 @@ POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.session_id strin
 POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.task_id string
 POST /api/v1/tasks/{id}/takeover/heartbeat response:ended .hold.ttl_seconds number
 POST /api/v1/tasks/{id}/takeover/heartbeat status 200
+POST /api/v1/tasks/{id}/takeover/heartbeat status 401
+POST /api/v1/tasks/{id}/takeover/heartbeat status 403
+POST /api/v1/tasks/{id}/takeover/heartbeat status 404
 POST /api/v1/tasks/{id}/takeover/heartbeat status 410
 
 POST /api/v1/tasks/{id}/release
