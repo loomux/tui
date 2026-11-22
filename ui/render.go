@@ -195,11 +195,14 @@ var hints = map[keymap.Screen][]struct {
 
 // footer is the last line: the screen's main keys, or a notice.
 func (a *App) footer() string {
+	if a.dialog != nil {
+		return a.dialogFooter()
+	}
 	if a.notice != "" {
 		return fit(" "+a.notice, a.width)
 	}
 	var parts []string
-	if it, ok := a.home.current(); ok && a.screen == keymap.ListScreen && held(it) {
+	if it, ok := a.home.current(); ok && a.screen == keymap.ListScreen && isHeld(it) {
 		if hint := a.takeBackHint(it); hint != "" {
 			parts = append(parts, hint)
 		}

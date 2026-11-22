@@ -1,0 +1,24 @@
+ loomux · test                                      ● updated 12:00:00   ?=help 
+
+ This server can't attach yet (it has no takeover): upgrade it.
+ 
+ Until then, to attach by hand (Loomux won't know someone is in the pane, and
+ may type into it):
+ 
+   kubectl -n loomux exec -it hub-0 -- tmux -L loomux attach -t loomux-task-1
+ 
+   ssh loomux@hub.example.net -t 'tmux -L loomux attach -t loomux-task-1'
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+ any key closes this

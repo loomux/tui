@@ -708,7 +708,6 @@ func TestActionsNotYetHere(t *testing.T) {
 	for k, want := range map[string]string{
 		"enter": "opening a conversation",
 		"n":     "starting a conversation",
-		"a":     "attaching",
 		"w":     "watching",
 	} {
 		h := loaded(t, 80, 24)

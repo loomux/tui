@@ -84,10 +84,10 @@ func (a *App) openAtStart() tea.Cmd {
 	return a.openConversation()
 }
 
-// held reports whether a row is driven from a terminal: the server says
+// isHeld reports whether a row is driven from a terminal: the server says
 // who holds it (S6), or, from a server that doesn't, its status says it
 // is taken over.
-func held(it item) bool {
+func isHeld(it item) bool {
 	return it.HeldBy != nil || it.Status == client.TaskHumanTakeover
 }
 
@@ -103,7 +103,7 @@ func (a *App) takeBack() tea.Cmd {
 	case a.takingBack:
 		a.notice = "taking it back…"
 		return nil
-	case !held(it):
+	case !isHeld(it):
 		a.notice = "nothing to take back: it isn't driven from a terminal"
 		return nil
 	}
