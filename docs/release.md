@@ -66,7 +66,9 @@ the tag a merge reserves doesn't start a second run.
 1. A pull request runs
    `deploy/changelog.sh release X.Y.0 YYYY-MM-DD`. That folds the
    fragments in `changes/` into a `## [X.Y.0]` section of `CHANGELOG.md`
-   and deletes them. Edit the section into prose and commit both.
+   and deletes them. Edit the section into prose and commit both. Add
+   the milestone's row to the README's server versions table, with the
+   server pin at that commit.
 2. It merges. Like every merge, it gets its own patch version first
    (except before 0.1.0).
 3. Tag its merge commit and push the tag:
@@ -110,6 +112,6 @@ gh attestation verify loomux-X.Y.Z-linux-amd64 -R loomux/tui
 chmod +x loomux-X.Y.Z-linux-amd64
 ```
 
-`docs/install.md` (T11) will cover installing in full.
+[`install.md`](install.md) covers installing in full.
 `go install github.com/Loomux/tui/cmd/loomux@vX.Y.Z` works too. That
 build reports the module version from its build info.
