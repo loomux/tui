@@ -10,6 +10,20 @@
 //     $XDG_STATE_HOME/loomux. A file or directory others can read is
 //     refused (ErrInsecure), not used. Every start prints Warning.
 //
+// It also gets the token and gives it up ("The link flow", "Storage and
+// revocation"):
+//
+//   - Login is `loomux login`: the terminal makes its own token (NewToken)
+//     and shows a link with the token's hash (TokenHash, LinkURL) and a
+//     code (LinkCode). The web's /link page shows the same code, and its
+//     Approve asks the server for a session for that hash. The terminal
+//     asks the server with the token until it is taken, and only then
+//     stores it.
+//   - Logout is `loomux logout`: the session is ended on the server, then
+//     the token deleted, also when the server couldn't be asked.
+//   - SignedOut is the 401 rule: the API's 401 to a request made with the
+//     stored token deletes that token.
+//
 // A token is never printed, logged or put in an error.
 package auth
 
@@ -30,6 +44,11 @@ var (
 	// ErrInsecure: the token file or its directory is open to others, or
 	// isn't a plain file or directory.
 	ErrInsecure = errors.New("insecure token file")
+	// ErrInvalid: what is stored for the account was read, and it isn't
+	// a token (a damaged file, a keyring entry something else wrote).
+	// Nothing can sign in with it: `loomux login` replaces it and
+	// `loomux logout` clears it.
+	ErrInvalid = errors.New("the stored token isn't valid")
 )
 
 // Account is whose token: a profile on a server. The same profile name on
