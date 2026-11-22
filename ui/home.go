@@ -70,6 +70,22 @@ func (h *home) rebuild() {
 	h.move(0)
 }
 
+// selectID puts the cursor on a conversation, showing all of them
+// without a filter if the view or the filter hides it. It reports
+// whether the list has it.
+func (h *home) selectID(id string) bool {
+	is := func(it item) bool { return it.ConversationID == id }
+	if !slices.ContainsFunc(h.items, is) {
+		return false
+	}
+	if !slices.ContainsFunc(h.visible, is) {
+		h.view, h.query = allView, ""
+		h.rebuild()
+	}
+	h.cursor = slices.IndexFunc(h.visible, is)
+	return true
+}
+
 // current is the item under the cursor.
 func (h *home) current() (item, bool) {
 	if h.cursor < 0 || h.cursor >= len(h.visible) {

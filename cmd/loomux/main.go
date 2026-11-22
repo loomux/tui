@@ -2,8 +2,9 @@
 //
 // With no command it shows the attention-first list of conversations for
 // the selected profile, from which a conversation's agent can be attached
-// to. version prints the client's version, and attach attaches this
-// terminal to an agent's tmux session under a hold. Login, logout, open
+// to, and open ID shows it on that conversation (the web's "open in
+// terminal"). version prints the client's version, and attach attaches
+// this terminal to an agent's tmux session under a hold. Login, logout
 // and the other screens come in later tickets.
 package main
 
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -25,11 +27,13 @@ import (
 )
 
 const usage = `usage: loomux [--profile NAME]
+       loomux [--profile NAME] open ID
        loomux version
        loomux attach [--profile NAME] [--force] [--keep-open] <conversation|task>
        loomux attach [--profile NAME] [--force] [--keep-open] --task ID
 
   (no command)  the list of conversations, on the profile's server
+  open ID       the list, on conversation ID (the web's "open in terminal")
   version       print the client version and the server release it is pinned to
   attach        attach this terminal to a conversation's agent, in its tmux
                 session, and hand the agent back when you detach. Meanwhile
@@ -74,11 +78,28 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("loomux", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	profile := fs.String("profile", "", "")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+	if err := fs.Parse(args); err != nil {
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
-	if err := list(*profile, stderr); err != nil {
+	var open string
+	switch rest := fs.Args(); {
+	case len(rest) == 0:
+	case rest[0] == "open":
+		// --profile may come after open too.
+		ofs := flag.NewFlagSet("open", flag.ContinueOnError)
+		ofs.SetOutput(io.Discard)
+		ofs.StringVar(profile, "profile", *profile, "")
+		if err := ofs.Parse(rest[1:]); err != nil || ofs.NArg() != 1 || strings.TrimSpace(ofs.Arg(0)) == "" {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		open = strings.TrimSpace(ofs.Arg(0))
+	default:
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+	if err := list(*profile, open, stderr); err != nil {
 		fmt.Fprintf(stderr, "loomux: %v\n", err)
 		return 1
 	}
@@ -86,8 +107,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 // list shows the list of conversations on the profile's server, signed
-// in with the profile's stored token.
-func list(profile string, stderr io.Writer) error {
+// in with the profile's stored token, and goes to conversation open when
+// it isn't "".
+func list(profile, open string, stderr io.Writer) error {
 	path, err := config.Path()
 	if err != nil {
 		return err
@@ -119,7 +141,7 @@ func list(profile string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return runUI(ui.Options{Profile: p.Name, API: c, Keys: cfg.Keymap, Attach: attachFromList(c, cfg, p)})
+	return runUI(ui.Options{Profile: p.Name, API: c, Keys: cfg.Keymap, Attach: attachFromList(c, cfg, p), Server: p.Server, Open: open})
 }
 
 // attachFromList is how the list's attach key attaches: the config's

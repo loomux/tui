@@ -202,6 +202,11 @@ func (a *App) footer() string {
 		return fit(" "+a.notice, a.width)
 	}
 	var parts []string
+	if it, ok := a.home.current(); ok && a.screen == keymap.ListScreen && isHeld(it) {
+		if hint := a.takeBackHint(it); hint != "" {
+			parts = append(parts, hint)
+		}
+	}
 	for _, h := range hints[a.screen] {
 		if k := a.firstKey(h.action); k != "" {
 			parts = append(parts, bold.Render(k)+" "+h.label)

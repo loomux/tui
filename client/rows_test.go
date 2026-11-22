@@ -54,3 +54,30 @@ func TestWorkspaces(t *testing.T) {
 		t.Errorf("GET %s: %+v", path, list)
 	}
 }
+
+// A conversation's task carries its active hold (S6) once the server
+// has it: a drive hold, or null. The pinned server sends neither, so it
+// is read when present and nil when not.
+func TestConversationTasksCarryTheirHoldWhenPresent(t *testing.T) {
+	c := newTest(t, "tok", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"conversation_id":"c-1","messages":[],"tasks":[
+			{"id":"held","status":"failed","error_class":"login_required",
+			 "hold":{"id":"h-1","task_id":"held","mode":"drive","client_kind":"tui","client_label":"laptop",
+			         "acquired_at":"2026-11-20T09:58:00Z"}},
+			{"id":"free","status":"awaiting_input","hold":null},
+			{"id":"old","status":"human_takeover"}
+		],"dispatches":[],"confirmations":[],"has_more":false}`)
+	})
+	conv, err := c.Conversation(context.Background(), "c-1", Page{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, free, old := conv.Tasks[0], conv.Tasks[1], conv.Tasks[2]
+	if held.Hold == nil || held.Hold.ID != "h-1" || held.Hold.Mode != ModeDrive || held.Hold.ClientLabel != "laptop" {
+		t.Errorf("held task's hold = %+v", held.Hold)
+	}
+	if free.Hold != nil || old.Hold != nil {
+		t.Errorf("unheld tasks' holds = %+v, %+v; want nil", free.Hold, old.Hold)
+	}
+}

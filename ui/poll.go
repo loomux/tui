@@ -79,6 +79,9 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 		a.home.setRows(msg.page.Conversations, msg.page.HasMore, a.names)
 	}
 	var cmds []tea.Cmd
+	if a.opening != "" && msg.err == nil {
+		cmds = append(cmds, a.openAtStart())
+	}
 	if a.again {
 		a.again = false
 		cmds = append(cmds, a.poll())
