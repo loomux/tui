@@ -46,7 +46,7 @@ oldest server a release is built and tested against.
 
 | loomux | Loomux server |
 |---|---|
-| `main` (the next release) | 0.3.143 or later |
+| `main` (the next release) | 0.3.155 or later |
 
 A pin bump updates the `main` row, and cutting a milestone adds a row
 for it ([`docs/release.md`](docs/release.md)).
