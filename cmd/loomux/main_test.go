@@ -3,10 +3,14 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 
 	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
@@ -15,6 +19,36 @@ import (
 	"github.com/Loomux/tui/internal/version"
 	"github.com/Loomux/tui/ui"
 )
+
+// TestMain is the package's for every test file.
+//
+// No test reaches the real keyring: the tests' configs name the file
+// store, and the ones about the keyring get go-keyring's in-memory mock
+// (login and logout, auth_test.go). That holds for the runs below too.
+//
+// The test binary can stand in for loomux itself: started with
+// LOOMUX_TEST_RUN, it runs that invocation with the real standard streams
+// and exits with its status. The terminal tests start it that way in a
+// tmux pane, so what attaches is the client's own main, on a terminal
+// (attach_tmux_test.go).
+func TestMain(m *testing.M) {
+	keyring.MockInit()
+	// Started with arguments that aren't the test binary's own: the tmux
+	// window the screens open runs this program with "attach ...".
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-test.") {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	}
+	if args, ok := os.LookupEnv("LOOMUX_TEST_RUN"); ok {
+		if pidfile := os.Getenv("LOOMUX_TEST_PIDFILE"); pidfile != "" {
+			if err := os.WriteFile(pidfile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
+		os.Exit(run(strings.Fields(args), os.Stdout, os.Stderr))
+	}
+	os.Exit(m.Run())
+}
 
 func TestVersion(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -31,7 +65,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{{"login"}, {"version", "extra"}, {"-h"}, {"--version"}, {"--profile"}, {"--profile", "test", "extra"}, {"--nope"}} {
+	for _, args := range [][]string{{"version", "extra"}, {"-h"}, {"--version"}, {"--profile"}, {"--profile", "test", "extra"}, {"--nope"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("%q: exit %d, want 2", args, code)

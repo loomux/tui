@@ -3,9 +3,9 @@
 // With no command it shows the attention-first list of conversations for
 // the selected profile, from which a conversation's agent can be attached
 // to, and open ID shows it on that conversation (the web's "open in
-// terminal"). version prints the client's version, and attach attaches
-// this terminal to an agent's tmux session under a hold. Login, logout
-// and the other screens come in later tickets.
+// terminal"). login and logout sign a profile in and out, version prints
+// the client's version, and attach attaches this terminal to an agent's
+// tmux session under a hold. The other screens come in later tickets.
 package main
 
 import (
@@ -28,12 +28,17 @@ import (
 
 const usage = `usage: loomux [--profile NAME]
        loomux [--profile NAME] open ID
+       loomux login [--profile NAME] [--no-browser]
+       loomux logout [--profile NAME]
        loomux version
        loomux attach [--profile NAME] [--force] [--keep-open] <conversation|task>
        loomux attach [--profile NAME] [--force] [--keep-open] --task ID
 
   (no command)  the list of conversations, on the profile's server
   open ID       the list, on conversation ID (the web's "open in terminal")
+  login         sign in: approve this terminal from a browser that is signed
+                in to Loomux, by a link and a code to compare
+  logout        sign out: end the session on the server and delete its token
   version       print the client version and the server release it is pinned to
   attach        attach this terminal to a conversation's agent, in its tmux
                 session, and hand the agent back when you detach. Meanwhile
@@ -42,6 +47,7 @@ const usage = `usage: loomux [--profile NAME]
 
   --profile NAME  the config's profile to use (else LOOMUX_PROFILE, else
                   default_profile); LOOMUX_SERVER overrides its server URL
+  --no-browser    login: print the link without opening a browser
   --force         take the task from another client that holds it,
                   without asking
   --task ID       the id is a task's (otherwise a conversation's is
@@ -75,6 +81,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "attach" {
 		return attachMain(args[1:], stdout, stderr)
 	}
+	// --profile may come before the command or after it.
 	fs := flag.NewFlagSet("loomux", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	profile := fs.String("profile", "", "")
@@ -85,6 +92,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var open string
 	switch rest := fs.Args(); {
 	case len(rest) == 0:
+	case rest[0] == "login":
+		return login(*profile, rest[1:], stdout, stderr)
+	case rest[0] == "logout":
+		return logout(*profile, rest[1:], stdout, stderr)
 	case rest[0] == "open":
 		// --profile may come after open too.
 		ofs := flag.NewFlagSet("open", flag.ContinueOnError)

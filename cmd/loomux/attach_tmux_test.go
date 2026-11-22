@@ -8,7 +8,6 @@ package main
 // the fake ssh: a script that attaches to that local tmux session.
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,28 +24,6 @@ import (
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/internal/tmuxtest"
 )
-
-// TestMain lets the test binary stand in for loomux itself: started with
-// LOOMUX_TEST_RUN, it runs that invocation with the real standard streams
-// and exits with its status. The terminal tests start it that way in a
-// tmux pane, so what attaches is the client's own main, on a terminal.
-func TestMain(m *testing.M) {
-	// Started with arguments that aren't the test binary's own: the tmux
-	// window the screens open runs this program with "attach ...".
-	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-test.") {
-		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
-	}
-	if args, ok := os.LookupEnv("LOOMUX_TEST_RUN"); ok {
-		if pidfile := os.Getenv("LOOMUX_TEST_PIDFILE"); pidfile != "" {
-			if err := os.WriteFile(pidfile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-		}
-		os.Exit(run(strings.Fields(args), os.Stdout, os.Stderr))
-	}
-	os.Exit(m.Run())
-}
 
 // inTerminal is a client started in a pane of the terminal's tmux,
 // attaching through the fake ssh to the session "agent" of the agent's
