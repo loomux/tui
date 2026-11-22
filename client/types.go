@@ -53,6 +53,29 @@ type ConversationSummary struct {
 	Status         string    `json:"status"`
 	WorkspaceID    string    `json:"workspace_id"`
 	UpdatedAt      time.Time `json:"updated_at"`
+
+	// HeldBy, PendingConfirmationID (S6) and Watchers (S10) come with
+	// later server releases than the pinned one, so they aren't in
+	// testdata/uses.txt: they are read when a server sends them and
+	// empty when it doesn't, and nothing relies on them being there.
+	// The ticket that bumps the pin past them adds their lines.
+
+	// HeldBy is who drives one of the conversation's tasks from a
+	// terminal (its active drive hold), or nil.
+	HeldBy *Holder `json:"held_by"`
+	// PendingConfirmationID is the offer the conversation waits on a yes
+	// or no to, or "".
+	PendingConfirmationID string `json:"pending_confirmation_id"`
+	// Watchers counts the watch holds on the conversation's tasks.
+	Watchers int `json:"watchers"`
+}
+
+// Holder is a list row's held_by: who holds the conversation, and since
+// when.
+type Holder struct {
+	ClientKind  string    `json:"client_kind"`
+	ClientLabel string    `json:"client_label"`
+	Since       time.Time `json:"since"`
 }
 
 // Conversation is GET /conversations/{id}: one page of its messages (the
