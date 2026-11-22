@@ -91,6 +91,10 @@ func TestTerminalListAttachWindow(t *testing.T) {
 	if n := len(windows()); n != 1 {
 		t.Fatalf("%d windows before the attach, want 1", n)
 	}
+	// The window is named for the row's workspace, and a row shows the
+	// start of the workspace's id until the names arrive: wait for the
+	// name before a, or a slow machine names the window ws-2.
+	it.screen("web")
 
 	it.terminal.Tmux("send-keys", "-t", "=terminal:", "a")
 	it.agent.WaitClients(agentSession, 1, 20*time.Second)
