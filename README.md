@@ -20,6 +20,10 @@ a terminal attaches to an agent) and `loomux open`, for a profile that
 already has a stored token. Logging in and chat are added ticket by
 ticket, following the build plan in the design.
 
+The conversation screen (messages as markdown, the live stream, task
+status, a task's transcript) is built in `ui/conversation`, but no
+command opens it yet: the list that does comes next.
+
 ## Design
 
 The design is

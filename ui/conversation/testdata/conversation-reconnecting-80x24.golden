@@ -1,0 +1,24 @@
+ loomux · test · cc-hub                                  reconnecting…   ?=help
+ you · 12:01
+   The ConversationPage test fails about one run in five on CI. Can you find
+   out why and fix it?
+
+ loomux · 12:03
+   ## What was wrong
+
+   The test raced the stream's first event. Two fixes:
+
+   1.  waitFor  now waits for the  task_update , not for a timeout.
+   2. The fake server sends its heartbeat after the first frame.
+
+     npm test -- ConversationPage --repeat 50
+
+   All 50 runs pass. See the stream's notes https://example.net/docs/stream.
+
+ you · 12:08
+   Good. Run the nightly suite against it too.
+
+────────────────────────────────────────────────────────────────────────────────
+ ◐ running          claude-code                                           12:08
+ ▲ needs attention  codex  Bash command                                   12:06
+ esc back  p transcript  k/j scroll  q quit                        ↓ more below
