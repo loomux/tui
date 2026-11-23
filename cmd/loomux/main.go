@@ -1,9 +1,9 @@
 // Command loomux is the terminal client for Loomux.
 //
 // With no command it shows the attention-first list of conversations for
-// the selected profile, from which a conversation's agent can be attached
-// to, and open ID shows it on that conversation (the web's "open in
-// terminal"). login and logout sign a profile in and out, version prints
+// the selected profile, from which a conversation can be opened and its
+// agent attached to, and open ID opens that conversation (the web's "open
+// in terminal"). login and logout sign a profile in and out, version prints
 // the client's version, and attach attaches this terminal to an agent's
 // tmux session under a hold. The other screens come in later tickets.
 package main
@@ -35,7 +35,7 @@ const usage = `usage: loomux [--profile NAME]
        loomux attach [--profile NAME] [--force] [--keep-open] --task ID
 
   (no command)  the list of conversations, on the profile's server
-  open ID       the list, on conversation ID (the web's "open in terminal")
+  open ID       conversation ID, over the list (the web's "open in terminal")
   login         sign in: approve this terminal from a browser that is signed
                 in to Loomux, by a link and a code to compare
   logout        sign out: end the session on the server and delete its token
@@ -118,8 +118,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 // list shows the list of conversations on the profile's server, signed
-// in with the profile's stored token, and goes to conversation open when
-// it isn't "".
+// in with the profile's stored token, and opens conversation open when it
+// isn't "".
 func list(profile, open string, stderr io.Writer) error {
 	path, err := config.Path()
 	if err != nil {

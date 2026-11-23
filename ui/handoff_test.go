@@ -367,32 +367,13 @@ func TestHeldSince(t *testing.T) {
 	}
 }
 
-// loomux open <id>: the list starts on that conversation, and opening it
-// goes the way enter does.
-func TestOpenAtStart(t *testing.T) {
-	h := handoff(t, &fakeAPI{}, Options{Open: "conv-done"})
-	if h.selected() != "conv-done" {
-		t.Errorf("on %q, want conv-done", h.selected())
-	}
-	if f := h.footer(); !strings.Contains(f, "opening a conversation isn't in this version yet") {
-		t.Errorf("footer %q, want enter's notice", f)
-	}
-	// Later polls leave the cursor where the user puts it.
-	h.key("k")
-	h.send(refreshMsg{})
-	h.flush()
-	if h.selected() == "conv-done" {
-		t.Error("a later poll moved the cursor back to the opened conversation")
-	}
-}
-
 // A view or filter chosen before the list came in doesn't hide the
 // conversation: the list shows them all to put the cursor on it.
 func TestOpenAtStartShowsAll(t *testing.T) {
-	api := &fakeAPI{page: samplePage(), workspaces: sampleWorkspaces()}
-	h := newHarnessOpts(t, api, 100, 24, Options{Server: server, Open: "conv-done"})
+	h := newHarnessOpts(t, openable(), 100, 24, Options{Server: server, Open: "conv-done"})
 	h.send(keyPress("tab")) // needs you, which conv-done isn't
 	h.flush()
+	h.wantConversation("conv-done", "notes")
 	if h.selected() != "conv-done" || h.app.home.view != allView {
 		t.Errorf("on %q in view %v, want conv-done in the all view", h.selected(), h.app.home.view)
 	}
@@ -411,23 +392,14 @@ func TestOpenAtStartNotListed(t *testing.T) {
 
 // A first poll that fails doesn't use up the open: the first list does.
 func TestOpenAtStartAfterAnError(t *testing.T) {
-	api := &fakeAPI{page: samplePage(), err: errors.New("connection refused")}
+	api := openable()
+	api.err = errors.New("connection refused")
 	h := handoff(t, api, Options{Open: "conv-done"})
-	api.mu.Lock()
-	api.err = nil
-	api.mu.Unlock()
+	api.set(func() { api.err = nil })
 	h.send(refreshMsg{})
 	h.flush()
+	h.wantConversation("conv-done", "notes")
 	if h.selected() != "conv-done" {
 		t.Errorf("on %q, want conv-done", h.selected())
-	}
-}
-
-// enter's notice points at what works meanwhile.
-func TestEnterPointsAtTheBrowser(t *testing.T) {
-	h := handoff(t, &fakeAPI{}, Options{})
-	h.key("enter")
-	if f := h.footer(); !strings.Contains(f, "o opens it in the browser") {
-		t.Errorf("footer %q", f)
 	}
 }

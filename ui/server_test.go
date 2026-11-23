@@ -29,8 +29,14 @@ func serverClient(t *testing.T, srv *apitest.Server, label string) *client.Clien
 	return c
 }
 
-// loomux open on a conversation another terminal drives, then T: the
-// list starts on it, and the take back ends the other terminal's hold
+// quietAPI is a client whose streams are closed ones: the harness runs
+// every command to its end.
+type quietAPI struct{ *client.Client }
+
+func (quietAPI) OpenStream(id string) *client.Stream { return closedStream(id) }
+
+// loomux open on a conversation another terminal drives, then back and
+// T: the list is on it, and the take back ends the other terminal's hold
 // and hands the task back.
 func TestTakeBackAgainstTheServer(t *testing.T) {
 	srv := apitest.New(t)
@@ -44,7 +50,7 @@ func TestTakeBackAgainstTheServer(t *testing.T) {
 	}
 
 	h := &harness{t: t, now: time.Now()}
-	h.app = New(Options{Profile: "test", API: serverClient(t, srv, "laptop"), Server: srv.URL, Open: task.ConversationID,
+	h.app = New(Options{Profile: "test", API: quietAPI{serverClient(t, srv, "laptop")}, Server: srv.URL, Open: task.ConversationID,
 		Browse: func(link string) error { h.browsed = append(h.browsed, link); return nil }})
 	h.app.tick = func(d time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
 		return func() tea.Msg { return firedTick{d, fn(time.Now().Add(d))} }
@@ -56,10 +62,10 @@ func TestTakeBackAgainstTheServer(t *testing.T) {
 	if h.selected() != task.ConversationID {
 		t.Fatalf("on %q, want %q (open); other is %q", h.selected(), task.ConversationID, other.ConversationID)
 	}
-	if f := h.footer(); !strings.Contains(f, "opening a conversation") {
-		t.Errorf("footer after open: %q, want enter's notice", f)
+	if f := h.frame(); !strings.Contains(f, "triage the inbox") || !strings.Contains(f, "on it") || strings.Contains(f, "a quick question") {
+		t.Errorf("after open the conversation isn't shown:\n%s", f)
 	}
-	h.key("esc") // the notice lasts until a key
+	h.key("esc")
 	if f := h.footer(); !strings.Contains(f, "T take back") {
 		t.Errorf("footer on the held row: %q", f)
 	}

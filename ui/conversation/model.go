@@ -219,6 +219,15 @@ func New(o Options) *Model {
 	return m
 }
 
+// SetTitle renames the conversation in the header (Options.Title), for a
+// root that learns the name once the screen is open. An empty title
+// leaves it as it is.
+func (m *Model) SetTitle(title string) {
+	if title = line(title); title != "" {
+		m.title = title
+	}
+}
+
 // Init fetches the conversation and opens its stream. It also asks the
 // terminal for its background colour, which chooses the markdown style.
 func (m *Model) Init() tea.Cmd {

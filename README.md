@@ -16,12 +16,10 @@ the web client.
 **Pre-release, not usable yet.** So far there are `loomux login`,
 `loomux logout` and `loomux version`, plus the config file, the token
 stores, the keymap, the list of conversations (from which, or with
-`loomux attach`, a terminal attaches to an agent) and `loomux open`.
-Chat is added ticket by ticket, following the build plan in the design.
-
-The conversation screen (messages as markdown, the live stream, task
-status, a task's transcript) is built in `ui/conversation`, but no
-command opens it yet: the list that does comes next.
+`loomux attach`, a terminal attaches to an agent), the conversation
+screen, and `loomux open`, which starts on it. Chat is added ticket by
+ticket, following the build plan in the design: a conversation can be
+read so far, not answered.
 
 ## Design
 
@@ -93,6 +91,8 @@ workspace, the first message and how long ago it last changed.
   all again.
 - `/` filters as you type: every word must be in the row's message,
   workspace or status. `enter` keeps the filter, `esc` clears it.
+- `enter` opens the conversation: see
+  [A conversation](#a-conversation).
 - `a` attaches to the conversation's agent: see
   [Attaching to an agent](#attaching-to-an-agent).
 - `o` opens the conversation in the browser. Over ssh, or with no
@@ -102,12 +102,32 @@ workspace, the first message and how long ago it last changed.
   and the task takes messages again.
 - `?` shows the keys in effect.
 
-`loomux open ID` starts the list on that conversation: the command the
-web shows next to a conversation. `--profile` works with it as it does
-without a command.
+`loomux open ID` opens that conversation at once: the command the web
+shows next to a conversation. `back` (`esc`) then shows the list, on it.
+A conversation that isn't among the newest 100 can't be opened yet; the
+list says so. `--profile` works with it as it does without a command.
 
 The list polls the server every 5 seconds. It needs a token stored for
 the profile, which `loomux login` will store.
+
+## A conversation
+
+`enter` on the list, or `loomux open ID`, shows a conversation: its
+messages, with replies rendered as markdown, the turn in flight and the
+status of its tasks, kept current by the conversation's event stream.
+The header says `● live` while the stream is connected, and
+`reconnecting…` once it has been down for 5 seconds.
+
+- Scrolling up to the top loads older messages.
+- `p` shows a task's transcript: what was sent to the agent, its answer
+  and its pane at the end of each turn.
+- `esc` goes back to the list, which is polled at once, and `q` quits.
+- `?` shows the keys in effect.
+
+Sending a message, answering a prompt and the list's other actions
+(attach, browser, take back) aren't on this screen yet. When the server
+no longer accepts the token, the conversation closes, and the list says
+to sign in again.
 
 ## Configuration
 

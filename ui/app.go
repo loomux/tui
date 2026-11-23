@@ -1,7 +1,8 @@
 // Package ui is the terminal client's Bubble Tea screens (the design in
 // loomux/server, docs/design/tui-client-design.md, "Main workflows"). So
 // far it has the home screen: the attention-first list of conversations,
-// with its filter and its ? help, attaching to a conversation's agent
+// with its filter and its ? help, the conversation opened over it
+// (open.go, package conversation), attaching to a conversation's agent
 // from it (attach.go), and the handoff between clients: o opens a
 // conversation on the web, T takes one back from the terminal driving
 // it, and Options.Open starts on one (loomux open).
@@ -26,14 +27,16 @@ import (
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
 	"github.com/Loomux/tui/internal/browser"
+	"github.com/Loomux/tui/ui/conversation"
 )
 
-// API is what the list asks the server. A *client.Client is one.
+// API is what the screens ask the server. A *client.Client is one.
 type API interface {
 	Conversations(ctx context.Context, limit int) (*client.ConversationPage, error)
 	Workspaces(ctx context.Context) ([]client.Workspace, error)
-	// Conversation and Release take a conversation back.
-	Conversation(ctx context.Context, id string, page client.Page) (*client.Conversation, error)
+	// What an open conversation asks. A take back asks for one too, and
+	// Release ends its holds.
+	conversation.API
 	Release(ctx context.Context, taskID, holdID string) (*client.Release, error)
 }
 
@@ -52,7 +55,7 @@ type Options struct {
 	Server string
 	// Browse opens a link in the browser: browser.Open when nil.
 	Browse func(link string) error
-	// Open is a conversation to go to once the list is in (loomux open).
+	// Open is a conversation to open once the list is in (loomux open).
 	Open string
 }
 
@@ -66,7 +69,8 @@ const (
 	minHeight      = 15
 )
 
-// App is the root model: the list, its filter's input and its help.
+// App is the root model: the list, its filter's input and its help, and
+// the conversation opened over them.
 type App struct {
 	profile  string
 	api      API
@@ -84,8 +88,12 @@ type App struct {
 	helpOffset    int
 	notice        string // a line in the footer's place until the next key
 	quitting      bool
-	opening       string // the conversation to go to once the list is in
+	opening       string // the conversation to open once the list is in
 	takingBack    bool   // a take back is in flight
+	// conv is the conversation shown over the list, while one is open,
+	// and convID its id.
+	conv   *conversation.Model
+	convID string
 
 	poller
 
@@ -153,6 +161,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.filter.SetWidth(max(1, a.width-3))
+		cmd = a.updateConversation(msg)
+	case conversation.BackMsg:
+		cmd = a.leaveConversation()
+	case conversation.SignedOutMsg:
+		a.signOut(msg.Err)
 	case pageMsg:
 		cmd = a.gotPage(msg)
 	case namesMsg:
@@ -175,6 +188,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = c
 			break
 		}
+		if a.conv != nil {
+			cmd = a.updateConversation(msg)
+			break
+		}
 		switch a.screen {
 		case keymap.FilterScreen:
 			cmd = a.filterKey(msg)
@@ -188,7 +205,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = a.typeFilter(msg)
 		}
 	default:
-		cmd = a.attachUpdate(msg)
+		// An attach's own message or the open conversation's. Both are
+		// asked, as an attach may still be settling behind a
+		// conversation; each ignores what isn't its own.
+		cmd = tea.Batch(a.attachUpdate(msg), a.updateConversation(msg))
 	}
 	a.home.scroll(a.bodyHeight())
 	return a, cmd
@@ -234,9 +254,7 @@ func (a *App) listKey(msg tea.KeyPressMsg) tea.Cmd {
 	case keymap.Attach:
 		return a.startAttach()
 	case keymap.Open:
-		if _, ok := a.home.current(); ok {
-			return a.openConversation()
-		}
+		return a.openConversation()
 	case keymap.Browser:
 		return a.browse()
 	case keymap.TakeBack:
@@ -329,6 +347,9 @@ func (a *App) View() tea.View {
 		return v
 	case a.width < minWidth || a.height < minHeight:
 		v.SetContent(ansi.Truncate(fmt.Sprintf("loomux needs at least %d×%d (this is %d×%d)", minWidth, minHeight, a.width, a.height), a.width, "…"))
+		return v
+	case a.conv != nil:
+		v.SetContent(a.conversationView())
 		return v
 	}
 	lines := []string{a.header()}

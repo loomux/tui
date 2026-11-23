@@ -706,9 +706,8 @@ func TestQuit(t *testing.T) {
 // doing nothing.
 func TestActionsNotYetHere(t *testing.T) {
 	for k, want := range map[string]string{
-		"enter": "opening a conversation",
-		"n":     "starting a conversation",
-		"w":     "watching",
+		"n": "starting a conversation",
+		"w": "watching",
 	} {
 		h := loaded(t, 80, 24)
 		h.key(k)

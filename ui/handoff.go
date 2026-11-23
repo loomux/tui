@@ -64,15 +64,7 @@ func (a *App) gotBrowsed(msg browsedMsg) {
 	}
 }
 
-// openConversation opens the conversation under the cursor, for enter
-// and loomux open. The conversation view (T5) isn't here yet, so it says
-// so and points at the browser.
-func (a *App) openConversation() tea.Cmd {
-	a.notice = "opening a conversation isn't in this version yet: " + a.firstKey(keymap.Browser) + " opens it in the browser"
-	return nil
-}
-
-// openAtStart goes to the conversation loomux open named, once the first
+// openAtStart opens the conversation loomux open named, once the first
 // list is in.
 func (a *App) openAtStart() tea.Cmd {
 	id := a.opening
