@@ -99,6 +99,9 @@ func (r *liveApp) start(o Options) {
 	r.t.Helper()
 	o.Profile, o.API = "test", r.api
 	r.app = &watched{App: New(o)}
+	// The list polls at the start and on Refresh only, so that what a
+	// test sees is the conversation's doing and not the next poll's.
+	r.app.tick = func(time.Duration, func(time.Time) tea.Msg) tea.Cmd { return nil }
 	in, keys := io.Pipe()
 	r.keys = keys
 	r.program = tea.NewProgram(r.app, tea.WithInput(in), tea.WithOutput(&bytes.Buffer{}), tea.WithWindowSize(100, 24), tea.WithoutSignals())
@@ -139,6 +142,16 @@ func (r *liveApp) wait(texts ...string) {
 			}
 		}
 		return true
+	})
+}
+
+// signedOutList waits for the list's signed-out screen. A conversation's
+// has the same words, and the messages too.
+func (r *liveApp) signedOutList() {
+	r.t.Helper()
+	r.until("showed the list signed out", func() bool {
+		s := r.app.shown()
+		return strings.Contains(s, "⚠ signed out") && strings.Contains(s, "Sign in again: loomux login") && !strings.Contains(s, "Done.")
 	})
 }
 
@@ -202,7 +215,7 @@ func TestOpenSignedOutAgainstTheServer(t *testing.T) {
 	if err := r.api.Logout(ctx); err != nil {
 		t.Fatal(err)
 	}
-	r.wait("⚠ signed out", "Sign in again: loomux login")
+	r.signedOutList()
 	r.noStream()
 }
 
@@ -214,7 +227,7 @@ func TestListSignedOutClosesTheStream(t *testing.T) {
 	r.wait("● live", "Done.")
 	r.refuse.Store(true)
 	r.program.Send(Refresh())
-	r.wait("⚠ signed out", "Sign in again: loomux login")
+	r.signedOutList()
 	r.noStream()
 }
 
