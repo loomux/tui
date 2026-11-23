@@ -68,8 +68,7 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 	if msg.err != nil {
 		a.pollErr = msg.err
 		if client.Unauthorized(msg.err) {
-			// The token is no good: asking again won't change that.
-			a.signedOut = true
+			a.signOut(msg.err)
 			return nil
 		}
 	} else {
@@ -77,6 +76,10 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 		a.loaded = true
 		a.lastOK = a.now()
 		a.home.setRows(msg.page.Conversations, msg.page.HasMore, a.names)
+		a.nameConversation()
+	}
+	if a.signedOut {
+		return nil // an open conversation's 401 came first: this was the last poll
 	}
 	var cmds []tea.Cmd
 	if a.opening != "" && msg.err == nil {
@@ -94,6 +97,14 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 		cmds = append(cmds, a.fetchNames())
 	}
 	return tea.Batch(cmds...)
+}
+
+// signOut is the answer to a 401, the list's or an open conversation's:
+// the token is no good and asking again won't change that. Polling
+// stops, the conversation closes, and the list says to sign in again.
+func (a *App) signOut(err error) {
+	a.signedOut, a.pollErr = true, err
+	a.closeConversation()
 }
 
 func (a *App) lacksName(rows []client.ConversationSummary) bool {
@@ -130,4 +141,5 @@ func (a *App) gotNames(msg namesMsg) {
 	}
 	a.names = names
 	a.home.setNames(names)
+	a.nameConversation()
 }

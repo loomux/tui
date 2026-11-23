@@ -760,7 +760,8 @@ const closeWait = 5 * time.Second
 
 // Close ends what an attach left behind when the screens end: it gives
 // back a hold taken and not yet attached with, and closes a tmux window
-// opened and not yet shown as such. Call it once the program has stopped.
+// opened and not yet shown as such. It also closes a conversation still
+// open. Call it once the program has stopped.
 //
 // A takeover on its way to the server is waited for, closeWait at most:
 // its answer is the only way to learn the hold to give back. One still
@@ -771,6 +772,7 @@ const closeWait = 5 * time.Second
 // didn't reach the server (an *attach.ReleaseError), its own or that of
 // an attach a signal ended. That hold stays until its lease runs out.
 func (a *App) Close() error {
+	a.closeConversation()
 	done := make(chan struct{})
 	go func() {
 		a.work.Wait()

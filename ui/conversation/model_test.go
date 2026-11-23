@@ -1142,3 +1142,18 @@ func TestALightBackgroundChangesTheMarkdownStyle(t *testing.T) {
 type lightColor struct{}
 
 func (lightColor) RGBA() (r, g, b, a uint32) { return 0xffff, 0xffff, 0xffff, 0xffff }
+
+// SetTitle renames the header, as Options.Title named it: one line of
+// clean text. An empty one changes nothing.
+func TestSetTitle(t *testing.T) {
+	m := New(Options{ID: "c-1", Profile: "test", Title: "4f0c6d2e", Width: 80, Height: 24})
+	m.SetTitle("cc-\x1b[31mhub\n2")
+	want := strings.Split(ansi.Strip(m.View()), "\n")[0]
+	if !strings.Contains(want, "loomux · test · cc-hub 2 ") {
+		t.Errorf("header = %q", want)
+	}
+	m.SetTitle(" \n")
+	if got := strings.Split(ansi.Strip(m.View()), "\n")[0]; got != want {
+		t.Errorf("an empty title changed the header to %q", got)
+	}
+}
