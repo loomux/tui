@@ -14,6 +14,7 @@ import (
 
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
+	"github.com/Loomux/tui/ui/conversation"
 )
 
 func (f *fakeAPI) Transcript(context.Context, string, client.Page) (*client.Transcript, error) {
@@ -367,4 +368,24 @@ func TestConversationKeepsItsName(t *testing.T) {
 	h.flush()
 	h.send(namesMsg{workspaces: sampleWorkspaces()})
 	h.wantConversation("conv-await", "notes")
+}
+
+// A conversation's 401 that arrives after it was left still signs out,
+// whatever is open by then: it is about the token, which every screen
+// uses, not about that conversation.
+func TestConversationSignedOutLate(t *testing.T) {
+	api := openable()
+	h := handoff(t, api, Options{})
+	h.key("enter")
+	h.key("esc", "j", "enter")
+	h.wantConversation("conv-offer", "infra-lab")
+	h.send(conversation.SignedOutMsg{Err: unauthorized})
+	if f, want := h.frame(), signedOutFrame(t); f != want {
+		t.Errorf("after a late 401:\n%s\nwant:\n%s", f, want)
+	}
+	// And what its screen had still to say leaves nothing behind.
+	h.send(conversation.BackMsg{})
+	if f, want := h.frame(), signedOutFrame(t); f != want {
+		t.Errorf("after a late back:\n%s\nwant:\n%s", f, want)
+	}
 }
