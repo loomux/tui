@@ -389,3 +389,29 @@ func TestConversationSignedOutLate(t *testing.T) {
 		t.Errorf("after a late back:\n%s\nwant:\n%s", f, want)
 	}
 }
+
+// A poll that gives the open conversation its workspace (an offer
+// accepted elsewhere, say) renames its header: the workspace's name may
+// be known already, and then no names are fetched.
+func TestPollNamesTheConversation(t *testing.T) {
+	api := openable()
+	h := handoff(t, api, Options{})
+	h.to("conv-direct") // no workspace yet
+	h.key("enter")
+	h.wantConversation("conv-direct", "—")
+	_, named := api.calls()
+	api.set(func() {
+		rows := api.page.Conversations
+		for i := range rows {
+			if rows[i].ConversationID == "conv-direct" {
+				rows[i].WorkspaceID = wsNotes
+			}
+		}
+	})
+	h.send(refreshMsg{})
+	h.flush()
+	h.wantConversation("conv-direct", "notes")
+	if _, n := api.calls(); n != named {
+		t.Errorf("the names were fetched %d more times: it isn't the poll that named it", n-named)
+	}
+}

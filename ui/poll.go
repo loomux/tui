@@ -76,6 +76,7 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 		a.loaded = true
 		a.lastOK = a.now()
 		a.home.setRows(msg.page.Conversations, msg.page.HasMore, a.names)
+		a.nameConversation()
 	}
 	if a.signedOut {
 		return nil // an open conversation's 401 came first: this was the last poll

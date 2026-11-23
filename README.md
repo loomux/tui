@@ -102,8 +102,9 @@ workspace, the first message and how long ago it last changed.
   and the task takes messages again.
 - `?` shows the keys in effect.
 
-`loomux open ID` opens that conversation at once: the command the web
-shows next to a conversation. `back` (`esc`) then shows the list, on it.
+`loomux open ID` opens that conversation as soon as the first list is
+in: the command the web shows next to a conversation. `back` (`esc`)
+then shows the list, on it.
 A conversation that isn't among the newest 100 can't be opened yet; the
 list says so. `--profile` works with it as it does without a command.
 

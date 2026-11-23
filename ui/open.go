@@ -65,8 +65,8 @@ func (a *App) closeConversation() {
 }
 
 // nameConversation puts the open conversation's workspace in its header,
-// once its name is known: loomux open may open one before the names
-// have come.
+// once it is known: loomux open may open one before the names have come,
+// and a conversation may get its workspace while it is open.
 func (a *App) nameConversation() {
 	if a.conv == nil {
 		return
