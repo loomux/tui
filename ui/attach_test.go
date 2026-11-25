@@ -458,6 +458,31 @@ func TestAttachWindow(t *testing.T) {
 	}
 }
 
+// The window is named for the workspace even when a is pressed before
+// the names have come back: it waits for GET /workspaces rather than
+// name the window after the start of the workspace's id.
+func TestAttachWindowWaitsForTheWorkspaceName(t *testing.T) {
+	w := newAttachWorld(t, "auto", true)
+	w.ssh("touch " + w.file("ran"))
+	// The names haven't arrived: the row shows the id's start, and the
+	// attach key is pressed now, with GET /workspaces still out.
+	w.app.names = map[string]string{}
+	w.app.home.setNames(nil)
+	w.app.namesBusy = true
+	w.key("a")
+	if len(w.windows) != 0 {
+		t.Fatalf("the window opened before the names came: %+v", w.windows)
+	}
+	w.send(namesMsg{workspaces: []client.Workspace{{ID: w.task.WorkspaceID, Name: "apitest"}}})
+	w.flush()
+	if len(w.windows) != 1 {
+		t.Fatalf("%d tmux windows asked for, want 1:\n%s", len(w.windows), w.frame())
+	}
+	if got := w.windows[0].name; got != "apitest" {
+		t.Errorf("the window is named %q, want the workspace's name, not the id's start", got)
+	}
+}
+
 // A window that can't be opened isn't the end: the attach happens here.
 func TestAttachWindowFallsBackInline(t *testing.T) {
 	w := newAttachWorld(t, "window", true)
