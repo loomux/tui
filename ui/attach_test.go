@@ -483,6 +483,50 @@ func TestAttachWindowWaitsForTheWorkspaceName(t *testing.T) {
 	}
 }
 
+// The names may answer before the conversation does: the window still
+// takes the name that arrived, not the one the row showed when a was
+// pressed.
+func TestAttachWindowUsesNamesThatArriveBeforeTheTask(t *testing.T) {
+	w := newAttachWorld(t, "auto", true)
+	w.ssh("touch " + w.file("ran"))
+	// The conversation request is in flight: its answer isn't handled
+	// yet, and the names answer passes it.
+	w.app.names = map[string]string{}
+	w.app.home.setNames(nil)
+	w.send(keyPress("a"))
+	w.send(namesMsg{workspaces: []client.Workspace{{ID: w.task.WorkspaceID, Name: "apitest"}}})
+	w.flush()
+	if len(w.windows) != 1 {
+		t.Fatalf("%d tmux windows asked for, want 1:\n%s", len(w.windows), w.frame())
+	}
+	if got := w.windows[0].name; got != "apitest" {
+		t.Errorf("the window is named %q, want the workspace's name, not the id's start", got)
+	}
+}
+
+// Esc while the window waits for the names settles the start at once:
+// the next a isn't ignored while the names answer is outstanding.
+func TestAttachCancelledWhileWaitingForTheNames(t *testing.T) {
+	w := newAttachWorld(t, "auto", true)
+	w.ssh("touch " + w.file("ran"))
+	// GET /workspaces is out: the first a waits for it.
+	w.app.names = map[string]string{}
+	w.app.home.setNames(nil)
+	w.app.namesBusy = true
+	w.key("a")
+	w.key("esc")
+	// Another a before the names answer: a start of its own, not ignored.
+	w.key("a")
+	w.send(namesMsg{workspaces: []client.Workspace{{ID: w.task.WorkspaceID, Name: "apitest"}}})
+	w.flush()
+	if len(w.windows) != 1 {
+		t.Fatalf("%d tmux windows asked for, want 1:\n%s", len(w.windows), w.frame())
+	}
+	if got := w.windows[0].name; got != "apitest" {
+		t.Errorf("the window is named %q, want the workspace's name", got)
+	}
+}
+
 // A window that can't be opened isn't the end: the attach happens here.
 func TestAttachWindowFallsBackInline(t *testing.T) {
 	w := newAttachWorld(t, "window", true)

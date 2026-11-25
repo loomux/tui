@@ -317,10 +317,14 @@ func (a *App) attachNow(st *starting) tea.Cmd {
 	case len(at.Window) == 0:
 		st.preface = "no command for a tmux window: attaching here"
 	default:
-		// The window is named for its workspace. If the names are still
-		// on their way (the list asked for them), wait for that answer
-		// rather than name the window after the start of the id; when
-		// none is coming, the id's start stands.
+		// The names may have answered since a was pressed: the window
+		// takes the name that arrived, not the stale one the row had.
+		if st.ws != "" && a.names[st.ws] != "" {
+			st.name = workspaceName(st.ws, a.names)
+		}
+		// If the names are still on their way (the list asked for them),
+		// wait for that answer rather than name the window after the
+		// start of the id; when none is coming, the id's start stands.
 		if st.ws != "" && a.names[st.ws] == "" && a.namesBusy {
 			st.waitName = true
 			return nil
@@ -685,6 +689,12 @@ func (a *App) attachKey(msg tea.KeyPressMsg) (handled bool, cmd tea.Cmd) {
 			// what it answers is cleaned up.
 			st.cancelled = true
 			a.notice = "attach cancelled"
+			if st.waitName {
+				// Nothing is in flight but the names, and their answer
+				// only updates the list: settle now, so a later attach
+				// key starts another start instead of being ignored.
+				a.settle(st)
+			}
 			return true, nil
 		}
 	}
