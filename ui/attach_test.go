@@ -527,6 +527,25 @@ func TestAttachCancelledWhileWaitingForTheNames(t *testing.T) {
 	}
 }
 
+// A refreshed names answer that omits the workspace takes the window back
+// to the id's start, as the list does, rather than keeping the cached
+// name.
+func TestAttachWindowUsesRefreshedNamesThatOmitTheWorkspace(t *testing.T) {
+	w := newAttachWorld(t, "auto", true)
+	w.ssh("touch " + w.file("ran"))
+	// The task request is in flight; a captured the cached name.
+	w.send(keyPress("a"))
+	// A successful refresh no longer lists the conversation's workspace.
+	w.send(namesMsg{workspaces: []client.Workspace{{ID: "another", Name: "another"}}})
+	w.flush()
+	if len(w.windows) != 1 {
+		t.Fatalf("%d tmux windows asked for, want 1:\n%s", len(w.windows), w.frame())
+	}
+	if got, want := w.windows[0].name, workspaceName(w.task.WorkspaceID, nil); got != want {
+		t.Errorf("the window is named %q, want %q: the refreshed names have no entry for the workspace", got, want)
+	}
+}
+
 // A window that can't be opened isn't the end: the attach happens here.
 func TestAttachWindowFallsBackInline(t *testing.T) {
 	w := newAttachWorld(t, "window", true)

@@ -318,8 +318,8 @@ func (a *App) attachNow(st *starting) tea.Cmd {
 		st.preface = "no command for a tmux window: attaching here"
 	default:
 		// The names may have answered since a was pressed: the window
-		// takes the name that arrived, not the stale one the row had.
-		if st.ws != "" && a.names[st.ws] != "" {
+		// takes the name the list has now, not the stale one it had.
+		if st.ws != "" {
 			st.name = workspaceName(st.ws, a.names)
 		}
 		// If the names are still on their way (the list asked for them),
