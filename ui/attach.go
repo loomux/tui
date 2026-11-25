@@ -88,8 +88,11 @@ type starting struct {
 
 	conv  string // the conversation
 	name  string // its workspace's name: the window's
+	ws    string // its conversation's workspace id
 	task  string // its task, once known
 	force bool   // take the task from the session that holds it
+	// waitName: attachNow stopped for the names: gotNames goes on with it.
+	waitName bool
 	// preface is a line for the terminal before the attach's own: why it
 	// attaches here and not in a window.
 	preface string
@@ -237,7 +240,7 @@ func (a *App) startAttach() tea.Cmd {
 		return nil // one at a time
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	st := &starting{ctx: ctx, cancel: cancel, conv: it.ConversationID, name: it.workspace}
+	st := &starting{ctx: ctx, cancel: cancel, conv: it.ConversationID, name: it.workspace, ws: it.WorkspaceID}
 	a.starting = st
 	a.notice = "attaching…"
 	api := a.attach.API
@@ -300,6 +303,12 @@ func (a *App) gotTask(msg taskMsg) tea.Cmd {
 		return nil
 	}
 	st.task = msg.task.ID
+	return a.attachNow(st)
+}
+
+// attachNow goes on with a start whose task is known: in a window of its
+// own, if one can be opened, or here.
+func (a *App) attachNow(st *starting) tea.Cmd {
 	at := a.attach
 	switch {
 	case at.Mode == AttachInline || (at.Mode != AttachWindow && !at.InTmux):
@@ -308,6 +317,18 @@ func (a *App) gotTask(msg taskMsg) tea.Cmd {
 	case len(at.Window) == 0:
 		st.preface = "no command for a tmux window: attaching here"
 	default:
+		// The names may have answered since a was pressed: the window
+		// takes the name the list has now, not the stale one it had.
+		if st.ws != "" {
+			st.name = workspaceName(st.ws, a.names)
+		}
+		// If the names are still on their way (the list asked for them),
+		// wait for that answer rather than name the window after the
+		// start of the id; when none is coming, the id's start stands.
+		if st.ws != "" && a.names[st.ws] == "" && a.namesBusy {
+			st.waitName = true
+			return nil
+		}
 		return a.openWindow(st)
 	}
 	return a.take(st)
@@ -668,6 +689,12 @@ func (a *App) attachKey(msg tea.KeyPressMsg) (handled bool, cmd tea.Cmd) {
 			// what it answers is cleaned up.
 			st.cancelled = true
 			a.notice = "attach cancelled"
+			if st.waitName {
+				// Nothing is in flight but the names, and their answer
+				// only updates the list: settle now, so a later attach
+				// key starts another start instead of being ignored.
+				a.settle(st)
+			}
 			return true, nil
 		}
 	}

@@ -169,7 +169,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pageMsg:
 		cmd = a.gotPage(msg)
 	case namesMsg:
-		a.gotNames(msg)
+		cmd = a.gotNames(msg)
 	case browsedMsg:
 		a.gotBrowsed(msg)
 	case takeBackMsg:

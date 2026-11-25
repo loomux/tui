@@ -129,17 +129,31 @@ func (a *App) fetchNames() tea.Cmd {
 }
 
 // gotNames takes the workspaces' names. Without them a row shows the
-// start of its workspace's id, so a failure is no error on screen.
-func (a *App) gotNames(msg namesMsg) {
+// start of its workspace's id, so a failure is no error on screen. An
+// attach waiting to name its window goes on: with the name if it came,
+// else with what it had.
+func (a *App) gotNames(msg namesMsg) tea.Cmd {
 	a.namesBusy = false
-	if msg.err != nil {
-		return
+	if msg.err == nil {
+		names := make(map[string]string, len(msg.workspaces))
+		for _, w := range msg.workspaces {
+			names[w.ID] = w.Name
+		}
+		a.names = names
+		a.home.setNames(names)
+		a.nameConversation()
 	}
-	names := make(map[string]string, len(msg.workspaces))
-	for _, w := range msg.workspaces {
-		names[w.ID] = w.Name
+	st := a.starting
+	if st == nil || !st.waitName {
+		return nil
 	}
-	a.names = names
-	a.home.setNames(names)
-	a.nameConversation()
+	st.waitName = false
+	if st.cancelled {
+		a.settle(st)
+		return nil
+	}
+	if st.ws != "" && a.names[st.ws] != "" {
+		st.name = workspaceName(st.ws, a.names)
+	}
+	return a.attachNow(st)
 }

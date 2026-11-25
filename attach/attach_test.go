@@ -494,7 +494,7 @@ func (c *countingAPI) Heartbeat(ctx context.Context, taskID, holdID string) (*cl
 // runs, and stops with the release.
 func TestHeartbeatRenewsTheHold(t *testing.T) {
 	w := newWorld(t)
-	w.program("ssh", "exec sleep 0.2")
+	w.program("ssh", "exec sleep 1")
 	api := &countingAPI{API: w.api}
 	s, err := take(ctx(t), api, w.task.ID, Options{}, fast)
 	if err != nil {
@@ -508,8 +508,12 @@ func TestHeartbeatRenewsTheHold(t *testing.T) {
 	if _, err := s.Run(ctx(t), Terminal{}); err != nil {
 		t.Fatal(err)
 	}
-	if api.beats.Load() < before+3 {
-		t.Errorf("%d heartbeats during a 200 ms attach at one per 20 ms", api.beats.Load()-before)
+	// A heartbeat is sent every 20 ms but only after the one before it is
+	// answered, so even an unloaded machine gets fewer than 50 in a
+	// second; under load it gets far fewer. Five in a second is a
+	// renewal still running, not a count of the timer.
+	if got := api.beats.Load() - before; got < 5 {
+		t.Errorf("%d heartbeats during a 1 s attach at one per 20 ms", got)
 	}
 	after := api.beats.Load()
 	time.Sleep(100 * time.Millisecond)

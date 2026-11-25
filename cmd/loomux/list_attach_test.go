@@ -75,6 +75,11 @@ func TestListIsStartedWithAttach(t *testing.T) {
 	}
 }
 
+// keepOpenPrompt is the text attach.Pause shows in a window that closes
+// with its command; the tests below match it, not the word "enter" that
+// other output could contain.
+const keepOpenPrompt = "Press enter to close this window."
+
 // --keep-open is for a tmux window, which closes with its command: after
 // a failure the reason stays on screen until enter.
 func TestAttachKeepOpen(t *testing.T) {
@@ -89,7 +94,7 @@ func TestAttachKeepOpen(t *testing.T) {
 	done := make(chan int, 1)
 	go func() { done <- run([]string{"attach", "--keep-open", "--task", e.task.ID}, io.Discard, &stderr) }()
 	deadline := time.Now().Add(15 * time.Second)
-	for !strings.Contains(stderr.String(), "enter") {
+	for !strings.Contains(stderr.String(), keepOpenPrompt) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no word about enter:\n%s", stderr.String())
 		}
@@ -119,7 +124,7 @@ func TestAttachKeepOpen(t *testing.T) {
 	e.ssh("exit 0")
 	e.stdin("")
 	code, _, out := loomux("attach", "--keep-open", "--task", e.task.ID)
-	if code != 0 || strings.Contains(out, "enter") {
+	if code != 0 || strings.Contains(out, keepOpenPrompt) {
 		t.Errorf("after a detach: exit %d, stderr:\n%s", code, out)
 	}
 }
@@ -168,7 +173,7 @@ func TestAttachKeepOpenAfterAnInterrupt(t *testing.T) {
 		if !releaseFails {
 			select {
 			case code := <-done:
-				if code != interrupted || strings.Contains(stderr.String(), "enter") {
+				if code != interrupted || strings.Contains(stderr.String(), keepOpenPrompt) {
 					t.Errorf("released: exit %d, stderr:\n%s", code, stderr.String())
 				}
 			case <-time.After(20 * time.Second):
@@ -176,7 +181,7 @@ func TestAttachKeepOpenAfterAnInterrupt(t *testing.T) {
 			}
 			continue
 		}
-		for !strings.Contains(stderr.String(), "enter") {
+		for !strings.Contains(stderr.String(), keepOpenPrompt) {
 			select {
 			case code := <-done:
 				t.Fatalf("exited %d without waiting for enter:\n%s", code, stderr.String())

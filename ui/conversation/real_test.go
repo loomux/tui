@@ -33,6 +33,9 @@ type root struct {
 	view      string
 	left      bool
 	signedOut error
+	// signedOutC carries the SignedOutMsg's error: a test waits for the
+	// message itself, not for the frame the model drew before it.
+	signedOutC chan error
 }
 
 func (r *root) Init() tea.Cmd { return r.screen.Init() }
@@ -49,6 +52,10 @@ func (r *root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		r.mu.Lock()
 		r.signedOut = msg.Err
 		r.mu.Unlock()
+		select {
+		case r.signedOutC <- msg.Err:
+		default:
+		}
 		return r, nil
 	}
 	_, cmd := r.screen.Update(msg)
@@ -83,7 +90,7 @@ type program struct {
 // the test ends.
 func run(t *testing.T, c *client.Client, id string) *program {
 	t.Helper()
-	r := &root{screen: conversation.New(conversation.Options{Client: c, ID: id, Profile: "test", Title: "apitest", Width: 80, Height: 24})}
+	r := &root{signedOutC: make(chan error, 1), screen: conversation.New(conversation.Options{Client: c, ID: id, Profile: "test", Title: "apitest", Width: 80, Height: 24})}
 	in, keys := io.Pipe()
 	p := tea.NewProgram(r, tea.WithInput(in), tea.WithOutput(&bytes.Buffer{}), tea.WithWindowSize(80, 24), tea.WithoutSignals())
 	pr := &program{t: t, root: r, keys: keys, done: make(chan error, 1)}
@@ -211,10 +218,13 @@ func TestScreenIsSignedOutWhenItsSessionEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.wait([]string{"signed out", "loomux login", "Done."})
-	p.root.mu.Lock()
-	defer p.root.mu.Unlock()
-	if !client.Unauthorized(p.root.signedOut) {
-		t.Errorf("the root heard %v, want SignedOutMsg with the 401", p.root.signedOut)
+	select {
+	case err := <-p.root.signedOutC:
+		if !client.Unauthorized(err) {
+			t.Errorf("the root heard %v, want SignedOutMsg with the 401", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the root never heard SignedOutMsg")
 	}
 }
 
