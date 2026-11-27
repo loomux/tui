@@ -136,7 +136,7 @@ func (a *App) listBody() []string {
 	var text []string
 	switch {
 	case a.signedOut:
-		text = []string{"The server refused the token.", "Sign in again: loomux login"}
+		text = []string{"The server refused the token.", clean(a.pollErr.Error())}
 	case !a.loaded && a.pollErr != nil:
 		text = []string{"Couldn't load the conversations:", clean(a.pollErr.Error())}
 	case !a.loaded:

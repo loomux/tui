@@ -24,6 +24,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
 	"github.com/Loomux/tui/internal/browser"
@@ -57,6 +58,12 @@ type Options struct {
 	Browse func(link string) error
 	// Open is a conversation to open once the list is in (loomux open).
 	Open string
+	// Store is where the profile's token is kept, Account whose token it
+	// is, and Token the token the API was made with. The API's own 401
+	// deletes it from the store (auth.SignedOut).
+	Store   auth.Store
+	Account auth.Account
+	Token   string
 }
 
 const (
@@ -78,6 +85,9 @@ type App struct {
 	now      func() time.Time
 	server   string
 	browseFn func(string) error
+	store    auth.Store
+	account  auth.Account
+	token    string
 	// tick is tea.Tick; tests replace it.
 	tick func(time.Duration, func(time.Time) tea.Msg) tea.Cmd
 
@@ -136,6 +146,9 @@ func New(o Options) *App {
 		now:      now,
 		server:   o.Server,
 		browseFn: browse,
+		store:    o.Store,
+		account:  o.Account,
+		token:    o.Token,
 		opening:  o.Open,
 		tick:     tea.Tick,
 		screen:   keymap.ListScreen,

@@ -152,7 +152,8 @@ func list(profile, open string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return runUI(ui.Options{Profile: p.Name, API: c, Keys: cfg.Keymap, Attach: attachFromList(c, cfg, p), Server: p.Server, Open: open})
+	return runUI(ui.Options{Profile: p.Name, API: c, Keys: cfg.Keymap, Attach: attachFromList(c, cfg, p), Server: p.Server, Open: open,
+		Store: store, Account: account, Token: token})
 }
 
 // attachFromList is how the list's attach key attaches: the config's
