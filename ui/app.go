@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -28,6 +27,7 @@ import (
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
 	"github.com/Loomux/tui/internal/browser"
+	"github.com/Loomux/tui/internal/inflight"
 	"github.com/Loomux/tui/ui/conversation"
 )
 
@@ -114,12 +114,23 @@ type App struct {
 	exec        func(tea.ExecCommand, tea.ExecCallback) tea.Cmd
 	newWindow   func(ctx context.Context, name string, env, argv []string) (id string, err error)
 	closeWindow func(ctx context.Context, id string) error
-	starting    *starting      // the attach on its way, if one is
-	dialog      *dialog        // its question or text, in the list's place
-	held        held           // a hold taken and not yet attached with
-	window      opened         // a tmux window opened and not yet shown as such
-	unshown     failures       // releases that failed, not yet said
-	work        sync.WaitGroup // requests that may leave a hold behind: Close waits for them
+	starting    *starting       // the attach on its way, if one is
+	dialog      *dialog         // its question or text, in the list's place
+	held        held            // a hold taken and not yet attached with
+	window      opened          // a tmux window opened and not yet shown as such
+	unshown     inflight.Errors // releases that failed and requests' 401s, not yet said
+	// work counts the list's and its conversation's requests in flight:
+	// Close waits for them, for a 401.
+	work inflight.Group
+
+	// closeWait bounds how long Close waits for work; tests shorten it.
+	closeWait time.Duration
+
+	// reqCtx is what the list's own requests run under. Close cancels it
+	// once closeWait has passed, so a hung request doesn't hold the
+	// screens open, as it cancels the attach's context.
+	reqCtx    context.Context
+	reqCancel context.CancelFunc
 }
 
 // New returns the screens for a profile's server.
@@ -139,6 +150,7 @@ func New(o Options) *App {
 	in := textinput.New()
 	in.Prompt = "/"
 	in.SetVirtualCursor(false) // the terminal's own cursor, placed by View
+	reqCtx, reqCancel := context.WithCancel(context.Background())
 	return &App{
 		profile:  o.Profile,
 		api:      o.API,
@@ -159,6 +171,9 @@ func New(o Options) *App {
 		exec:        tea.Exec,
 		newWindow:   tmuxNewWindow,
 		closeWindow: tmuxKillWindow,
+		closeWait:   closeWait,
+		reqCtx:      reqCtx,
+		reqCancel:   reqCancel,
 	}
 }
 
@@ -218,6 +233,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = a.typeFilter(msg)
 		}
 	default:
+		// The API's 401 is the token's whatever became of the view that
+		// asked: an answer can arrive after its screen or transcript was
+		// left or closed, when nothing is left to apply the rule.
+		if err := conversation.Unauthorized(msg); err != nil {
+			a.unshown.Said(err)
+			a.signOut(err)
+		}
 		// An attach's own message or the open conversation's. Both are
 		// asked, as an attach may still be settling behind a
 		// conversation; each ignores what isn't its own.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
+	"github.com/Loomux/tui/internal/inflight"
 )
 
 // fakeAPI answers the screen's fetches with what a test sets, and
@@ -779,6 +781,47 @@ func TestCloseEndsTheStreamAndTheFetchesInFlight(t *testing.T) {
 	}
 	if len(h.out) != 0 {
 		t.Errorf("a closed screen told the root %v", h.out)
+	}
+}
+
+// heldStream answers a read only when it is closed, with err: a 401 the
+// stream had already received as the screen was closing.
+type heldStream struct {
+	read    chan struct{}
+	closing chan struct{}
+	closed  sync.Once
+	err     error
+}
+
+func (s *heldStream) Next(context.Context) (client.StreamEvent, error) {
+	close(s.read)
+	<-s.closing
+	return client.StreamEvent{}, s.err
+}
+
+func (s *heldStream) Close() error {
+	s.closed.Do(func() { close(s.closing) })
+	return nil
+}
+
+// A stream closed with its 401 already received keeps it for the root:
+// the read's command stores it where the root's Close applies the rule.
+func TestAClosedStreamKeepsAReceived401(t *testing.T) {
+	work, unshown := &inflight.Group{}, &inflight.Errors{}
+	h := newHarness(t, fixture(), func(o *Options) { o.Work, o.Unshown = work, unshown })
+	stream := &heldStream{read: make(chan struct{}), closing: make(chan struct{}),
+		err: &client.Error{Status: http.StatusUnauthorized, Code: client.CodeUnauthorized, Message: "session expired"}}
+	h.m.stream = stream
+	answered := make(chan struct{})
+	go func() {
+		_ = h.m.next()()
+		close(answered)
+	}()
+	<-stream.read
+	h.m.Close() // the screen closes while the 401 is on its way
+	<-answered
+	if err := unshown.Take(); !client.Unauthorized(err) {
+		t.Errorf("the kept errors = %v, want the stream's 401", err)
 	}
 }
 

@@ -94,21 +94,27 @@ func (m *Model) fetchOlderTurns() tea.Cmd {
 
 func (m *Model) getTurns(page client.Page, older bool) tea.Cmd {
 	parent, api, inst, seq, task := m.ctx, m.api, m.inst, m.tr.seq, m.tr.task.ID
+	m.work.Start()
 	return func() tea.Msg {
+		defer m.work.Done()
 		ctx, cancel := contextWithTimeout(parent)
 		defer cancel()
 		p, err := api.Transcript(ctx, task, page)
+		m.keep401(err)
 		return turnsMsg{inst: inst, seq: seq, page: p, err: err, older: older, before: page.Before}
 	}
 }
 
 func (m *Model) onTurns(msg turnsMsg) tea.Cmd {
+	m.unshown.Said(msg.err) // taken here, whether it says it now or signs out with it
+	// The 401 comes first: a transcript answered after it was left still
+	// carries the token's answer, which is the conversation's too.
+	if client.Unauthorized(msg.err) {
+		return m.signOut(msg.err)
+	}
 	tr := m.tr
 	if tr == nil || msg.seq != tr.seq {
 		return nil // the answer of a transcript since left
-	}
-	if client.Unauthorized(msg.err) {
-		return m.signOut(msg.err)
 	}
 	if msg.older {
 		tr.olderFetching, tr.olderErr = false, msg.err
