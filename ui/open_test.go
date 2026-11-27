@@ -17,7 +17,12 @@ import (
 	"github.com/Loomux/tui/ui/conversation"
 )
 
-func (f *fakeAPI) Transcript(context.Context, string, client.Page) (*client.Transcript, error) {
+func (f *fakeAPI) Transcript(_ context.Context, _ string, _ client.Page) (*client.Transcript, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.turnsErr != nil {
+		return nil, f.turnsErr
+	}
 	return &client.Transcript{}, nil
 }
 

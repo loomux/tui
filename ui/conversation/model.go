@@ -289,6 +289,27 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 	return m, nil
 }
 
+// Unauthorized returns the API's 401 carried by one of the screen's
+// messages, else nil. The root applies the 401 rule to it whatever became
+// of the screen, or of the transcript that asked: an answer can arrive
+// after its view was left or closed, and the token it refused is still
+// the stored one.
+func Unauthorized(msg tea.Msg) error {
+	var err error
+	switch msg := msg.(type) {
+	case loadedMsg:
+		err = msg.err
+	case streamMsg:
+		err = msg.err
+	case turnsMsg:
+		err = msg.err
+	}
+	if client.Unauthorized(err) {
+		return err
+	}
+	return nil
+}
+
 // fetch asks for the newest page. One fetch is in flight at a time: an
 // answer shows the conversation as it was when it was asked, so two in
 // flight could land in the wrong order. A change while one is in flight

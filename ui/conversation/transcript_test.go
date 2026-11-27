@@ -69,6 +69,29 @@ func TestASignedOutTranscriptAsksForNoOlderTurns(t *testing.T) {
 	}
 }
 
+// A transcript's fetch can answer after its transcript was left: its 401
+// is still the token's, so the screen signs out all the same.
+func TestTranscriptLeftBeforeIts401StillSignsOut(t *testing.T) {
+	h := withTurns(t, turns())
+	h.api.turns = func(string, client.Page) (*client.Transcript, error) {
+		return nil, &client.Error{Status: http.StatusUnauthorized, Code: client.CodeUnauthorized}
+	}
+	h.hold()
+	h.key("p")   // the fetch is in flight
+	h.key("esc") // back to the conversation: the transcript is left
+	if h.m.tr != nil {
+		t.Fatal("the transcript is still open")
+	}
+	h.release() // it answers 401
+	if len(h.out) != 1 {
+		t.Fatalf("told the root %v, want SignedOutMsg", h.out)
+	}
+	if _, ok := h.out[0].(SignedOutMsg); !ok {
+		t.Errorf("told the root %#v, want SignedOutMsg", h.out[0])
+	}
+	h.has("loomux login")
+}
+
 func TestBackOnTheTranscriptReturnsToTheConversation(t *testing.T) {
 	h := withTurns(t, turns())
 	h.key("p", "esc")

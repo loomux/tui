@@ -39,6 +39,9 @@ type fakeAPI struct {
 	releaseErr error
 	released   []string // task ids, in order
 	releasedAs []string // the hold ids sent
+
+	// GET /tasks/{id}/transcript (the conversation's p).
+	turnsErr error
 }
 
 func (f *fakeAPI) Conversations(_ context.Context, limit int) (*client.ConversationPage, error) {

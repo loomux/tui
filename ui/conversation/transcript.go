@@ -103,12 +103,14 @@ func (m *Model) getTurns(page client.Page, older bool) tea.Cmd {
 }
 
 func (m *Model) onTurns(msg turnsMsg) tea.Cmd {
+	// The 401 comes first: a transcript answered after it was left still
+	// carries the token's answer, which is the conversation's too.
+	if client.Unauthorized(msg.err) {
+		return m.signOut(msg.err)
+	}
 	tr := m.tr
 	if tr == nil || msg.seq != tr.seq {
 		return nil // the answer of a transcript since left
-	}
-	if client.Unauthorized(msg.err) {
-		return m.signOut(msg.err)
 	}
 	if msg.older {
 		tr.olderFetching, tr.olderErr = false, msg.err

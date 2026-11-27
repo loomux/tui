@@ -141,11 +141,11 @@ func (o *opened) take() string {
 	return id
 }
 
-// failures keeps the cleanup errors the screens may have to say later
-// until they have said them, or, if the screens end first, until Close
-// returns them and applies the 401 rule: a release that didn't reach the
-// server leaves a hold until its lease runs out, and a 401 means a token
-// to drop. Each is said once.
+// failures keeps the cleanup errors and in-flight requests' 401s the
+// screens may have to apply later until they have, or, if the screens end
+// first, until Close returns them and applies the 401 rule: a release
+// that didn't reach the server leaves a hold until its lease runs out,
+// and a 401 means a token to drop. Each is said once.
 type failures struct {
 	mu   sync.Mutex
 	errs []error
@@ -249,11 +249,14 @@ func (a *App) startAttach() tea.Cmd {
 	a.starting = st
 	a.notice = "attaching…"
 	api := a.attach.API
+	a.work.Add(1)
 	return func() tea.Msg {
+		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(st.ctx, requestTimeout)
 		defer cancel()
 		conv, err := api.Conversation(ctx, st.conv, client.Page{Limit: 1})
 		if err != nil {
+			a.keep401(err)
 			return taskMsg{st: st, err: err}
 		}
 		task, ok := attach.TaskOf(conv.Tasks)
@@ -307,11 +310,15 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 
 func (a *App) gotTask(msg taskMsg) tea.Cmd {
 	st := msg.st
-	if st != a.starting {
+	// A 401 is the token's whatever became of the start: an answer can
+	// arrive after it was cancelled. It is applied here, or, if the
+	// screens end first, by Close.
+	if a.signOutOnAttach401(msg.err) {
+		a.unshown.said(msg.err)
+		a.settle(st)
 		return nil
 	}
-	if a.signOutOnAttach401(msg.err) {
-		a.settle(st)
+	if st != a.starting {
 		return nil
 	}
 	switch {
@@ -491,16 +498,19 @@ func (a *App) take(st *starting) tea.Cmd {
 
 func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	st := msg.st
+	// A 401 is the token's whatever became of the start; a release
+	// failure beside it stays the footer's warning.
+	if a.signOutOnAttach401(msg.err) {
+		a.unshown.said(msg.err)
+		a.settle(st)
+		return nil
+	}
 	if st != a.starting {
 		return nil // a failed release in it is Close's to say
 	}
 	// This handler takes the error from here, whether it says it now or
 	// signs out with it.
 	a.unshown.said(msg.err)
-	if a.signOutOnAttach401(msg.err) {
-		a.settle(st)
-		return nil
-	}
 	// A hold the takeover took and couldn't give back is said here: in
 	// the footer after a cancel, else with the rest of the error.
 	if st.cancelled {
@@ -816,7 +826,7 @@ func (a *App) dialogFooter() string {
 	return faint.Render(fit(" any key closes this", a.width))
 }
 
-// closeWait is how long Close lets a takeover on its way finish before
+// closeWait is how long Close lets a request on its way finish before
 // giving up on it.
 const closeWait = 5 * time.Second
 
@@ -825,14 +835,16 @@ const closeWait = 5 * time.Second
 // opened and not yet shown as such. It also closes a conversation still
 // open. Call it once the program has stopped.
 //
-// A takeover on its way to the server is waited for, closeWait at most:
-// its answer is the only way to learn the hold to give back. One still
-// unanswered then is abandoned; a hold it did take ends by itself when
-// its lease runs out.
+// A request in flight is waited for, closeWait at most: a takeover on its
+// way is so because its answer is the only way to learn the hold to give
+// back, and any of them may answer with the API's 401, which Close applies
+// even though no message handler is left to. One still unanswered then is
+// abandoned; a hold it did take ends by itself when its lease runs out.
 //
 // Its error is what the screens had no chance to say: a release that
 // didn't reach the server (an *attach.ReleaseError), its own or that of
-// an attach a signal ended. That hold stays until its lease runs out.
+// an attach a signal ended, and a request's API 401. That hold stays
+// until its lease runs out.
 func (a *App) Close() error {
 	a.closeConversation()
 	done := make(chan struct{})
@@ -845,6 +857,10 @@ func (a *App) Close() error {
 	select {
 	case <-done:
 	case <-wait.C:
+		// The requests are left to answer: their 401, if one is on its
+		// way, is what Close applies. One still unanswered now is
+		// abandoned with the takeover's context and the list's.
+		a.reqCancel()
 		if st := a.starting; st != nil {
 			st.cancel()
 		}

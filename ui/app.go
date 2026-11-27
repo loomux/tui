@@ -118,8 +118,14 @@ type App struct {
 	dialog      *dialog        // its question or text, in the list's place
 	held        held           // a hold taken and not yet attached with
 	window      opened         // a tmux window opened and not yet shown as such
-	unshown     failures       // releases that failed, not yet said
-	work        sync.WaitGroup // requests that may leave a hold behind: Close waits for them
+	unshown     failures       // releases that failed and requests' 401s, not yet said
+	work        sync.WaitGroup // requests in flight: Close waits for them, for a 401
+
+	// reqCtx is what the list's own requests run under. Close cancels it
+	// once closeWait has passed, so a hung request doesn't hold the
+	// screens open, as it cancels the attach's context.
+	reqCtx    context.Context
+	reqCancel context.CancelFunc
 }
 
 // New returns the screens for a profile's server.
@@ -139,6 +145,7 @@ func New(o Options) *App {
 	in := textinput.New()
 	in.Prompt = "/"
 	in.SetVirtualCursor(false) // the terminal's own cursor, placed by View
+	reqCtx, reqCancel := context.WithCancel(context.Background())
 	return &App{
 		profile:  o.Profile,
 		api:      o.API,
@@ -159,6 +166,8 @@ func New(o Options) *App {
 		exec:        tea.Exec,
 		newWindow:   tmuxNewWindow,
 		closeWindow: tmuxKillWindow,
+		reqCtx:      reqCtx,
+		reqCancel:   reqCancel,
 	}
 }
 
@@ -218,6 +227,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd = a.typeFilter(msg)
 		}
 	default:
+		// The API's 401 is the token's whatever became of the view that
+		// asked: an answer can arrive after its screen or transcript was
+		// left or closed, when nothing is left to apply the rule.
+		if err := conversation.Unauthorized(msg); err != nil {
+			a.signOut(err)
+		}
 		// An attach's own message or the open conversation's. Both are
 		// asked, as an attach may still be settling behind a
 		// conversation; each ignores what isn't its own.

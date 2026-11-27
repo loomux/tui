@@ -55,16 +55,20 @@ func (a *App) poll() tea.Cmd {
 	}
 	a.polling = true
 	a.gen++
-	api := a.api
+	api, parent := a.api, a.reqCtx
+	a.work.Add(1)
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		defer a.work.Done()
+		ctx, cancel := context.WithTimeout(parent, requestTimeout)
 		defer cancel()
 		p, err := api.Conversations(ctx, pollLimit)
+		a.keep401(err)
 		return pageMsg{p, err}
 	}
 }
 
 func (a *App) gotPage(msg pageMsg) tea.Cmd {
+	a.unshown.said(msg.err) // handled here, whether it says it now or signs out with it
 	a.polling = false
 	if a.signedOut {
 		return nil // an open conversation's 401 came first: this was the last poll
@@ -129,6 +133,15 @@ func (a *App) signOutOn401(err error) bool {
 	return true
 }
 
+// keep401 keeps an in-flight request's API 401 until its message is
+// handled, or, when the screens end first, until Close applies the rule:
+// the token the server refused is still the stored one.
+func (a *App) keep401(err error) {
+	if client.Unauthorized(err) {
+		a.unshown.put(err)
+	}
+}
+
 func (a *App) lacksName(rows []client.ConversationSummary) bool {
 	for _, r := range rows {
 		if _, ok := a.names[r.WorkspaceID]; r.WorkspaceID != "" && !ok {
@@ -141,11 +154,14 @@ func (a *App) lacksName(rows []client.ConversationSummary) bool {
 func (a *App) fetchNames() tea.Cmd {
 	a.namesBusy = true
 	a.namesAt = a.now()
-	api := a.api
+	api, parent := a.api, a.reqCtx
+	a.work.Add(1)
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		defer a.work.Done()
+		ctx, cancel := context.WithTimeout(parent, requestTimeout)
 		defer cancel()
 		ws, err := api.Workspaces(ctx)
+		a.keep401(err)
 		return namesMsg{ws, err}
 	}
 }
@@ -155,6 +171,7 @@ func (a *App) fetchNames() tea.Cmd {
 // attach waiting to name its window goes on: with the name if it came,
 // else with what it had.
 func (a *App) gotNames(msg namesMsg) tea.Cmd {
+	a.unshown.said(msg.err) // handled here, whether it says it now or signs out with it
 	a.namesBusy = false
 	if a.signOutOn401(msg.err) {
 		return nil
