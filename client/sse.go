@@ -186,7 +186,8 @@ const maxEvent = 1 << 20
 // starts over only after a connection has stayed up for 15 s, so a
 // server or proxy that accepts the stream and drops it at once is
 // retried no faster than one that refuses it. A 401 ends the stream:
-// Next returns the error.
+// Next returns the error, also when the stream was closed with the answer
+// already received.
 //
 // Next is called from one goroutine at a time; Close from any.
 type Stream struct {
@@ -286,15 +287,18 @@ func (s *Stream) connect(ctx context.Context) (StreamEvent, error) {
 	resp, err := s.open(ctx, connCtx, cancel)
 	if err != nil {
 		s.drop()
+		// A 401 the server answered with is the token's whatever became
+		// of the stream meanwhile: closing it doesn't hide that the
+		// token was refused, and the caller must still apply the rule.
+		if Unauthorized(err) {
+			s.err = err
+			return StreamEvent{}, err
+		}
 		if s.isClosed() {
 			return StreamEvent{}, ErrStreamClosed
 		}
 		if ctx.Err() != nil {
 			return StreamEvent{}, ctx.Err()
-		}
-		if Unauthorized(err) {
-			s.err = err
-			return StreamEvent{}, err
 		}
 		return s.disconnected(err), nil
 	}

@@ -368,6 +368,47 @@ func TestStreamCloseDuringConnect(t *testing.T) {
 	}
 }
 
+// holdingTransport hands its answer to the stream only when the test lets
+// it: the 401 has been received before the stream is closed.
+type holdingTransport struct {
+	entered chan struct{}
+	answer  chan struct{}
+}
+
+func (h *holdingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	close(h.entered)
+	<-h.answer
+	return &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":"unauthorized","code":"unauthorized"}`)),
+	}, nil
+}
+
+// A 401 the stream had already received when it was closed is still
+// Next's answer: closing it doesn't hide that the server refused the
+// token.
+func TestStreamCloseKeepsAReceived401(t *testing.T) {
+	c, err := New("https://loomux.example.net", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &holdingTransport{entered: make(chan struct{}), answer: make(chan struct{})}
+	c.hc.Transport = rt
+	s := c.OpenStream("c-1")
+	next := make(chan error, 1)
+	go func() {
+		_, err := s.Next(context.Background())
+		next <- err
+	}()
+	<-rt.entered
+	s.Close()
+	close(rt.answer)
+	if err := <-next; !Unauthorized(err) {
+		t.Errorf("Next after Close = %v, want the 401 it had received", err)
+	}
+}
+
 func TestStreamCloseEndsNext(t *testing.T) {
 	c := newTest(t, "tok", (&streamServer{}).handler(t))
 	s := c.OpenStream("c-1")
