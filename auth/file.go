@@ -94,6 +94,11 @@ func (s *FileStore) Set(a Account, tok string) error {
 	if err != nil {
 		return fmt.Errorf("token file: %w", err)
 	}
+	unlock, err := s.lock(a)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	// Written to a temporary file, created 0600, and renamed over the old
 	// one: never a partly written token, and never a moment at a wider
 	// mode. A rename replaces a symlink rather than writing through it.
@@ -131,17 +136,72 @@ func (s *FileStore) Set(a Account, tok string) error {
 // Delete removes the profile's token file, unless it holds another
 // server's token: that is another account's. An unreadable or corrupt
 // file is no one's token and is removed.
-//
-// Set and Delete aren't coordinated across processes: a Set for the same
-// profile landing between Delete's check and its remove would be lost.
-// The callers that delete (logout and the 401 rule) only delete a token
-// they have just read back from the store (drop), which leaves that
-// window a few system calls wide, between two commands one person ran
-// at the same moment. No lock is taken for it.
 func (s *FileStore) Delete(a Account) error {
 	if err := a.check(); err != nil {
 		return fmt.Errorf("token file: %w", err)
 	}
+	if _, err := os.Lstat(s.Dir); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("token file: %w", err)
+	}
+	unlock, err := s.lock(a)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.delete(a)
+}
+
+// DeleteIf removes the profile's token file if it still holds token. The
+// read and the remove are one step under the store's lock, so a login
+// that stores another token meanwhile keeps it.
+func (s *FileStore) DeleteIf(a Account, token string) (bool, error) {
+	return s.deleteIf(a, token, nil)
+}
+
+// deleteIf is DeleteIf; between, when not nil, runs after the stored
+// token matched and before it is removed, for the test that interleaves
+// a login. It runs with the lock held, so a login there waits.
+func (s *FileStore) deleteIf(a Account, token string, between func()) (bool, error) {
+	if err := a.check(); err != nil {
+		return false, fmt.Errorf("token file: %w", err)
+	}
+	if _, err := os.Lstat(s.Dir); errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("token file: %w", err)
+	}
+	unlock, err := s.lock(a)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	stored, err := s.Get(a)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	case stored != token:
+		return false, nil
+	}
+	if between != nil {
+		between()
+	}
+	if err := s.delete(a); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// lock is the store's lock for the account.
+func (s *FileStore) lock(a Account) (func(), error) {
+	return lockAccount(filepath.Join(s.Dir, ".locks"), a)
+}
+
+// delete removes the token file, its caller holding the lock.
+func (s *FileStore) delete(a Account) error {
 	p := s.path(a)
 	if f, err := openNoFollow(p); err == nil {
 		var tf tokenFile

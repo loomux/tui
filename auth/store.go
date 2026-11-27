@@ -85,6 +85,11 @@ type Store interface {
 	Set(Account, string) error
 	// Delete drops the account's token. Nothing stored is no error.
 	Delete(Account) error
+	// DeleteIf drops the account's token if it is still token, and
+	// reports whether it did. The comparison and the delete are one step,
+	// atomic against Set and other DeleteIf calls here and in other
+	// processes: a login that stores another token meanwhile keeps it.
+	DeleteIf(Account, string) (bool, error)
 }
 
 // Open returns the store the config's token_store names.

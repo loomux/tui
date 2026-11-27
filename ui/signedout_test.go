@@ -22,6 +22,7 @@ import (
 
 	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
+	"github.com/Loomux/tui/ui/conversation"
 )
 
 // testToken is what the harness's token store holds when its list signs
@@ -47,6 +48,14 @@ func (s testStore) Set(a auth.Account, token string) error {
 func (s testStore) Delete(a auth.Account) error {
 	delete(s, a)
 	return nil
+}
+
+func (s testStore) DeleteIf(a auth.Account, token string) (bool, error) {
+	if stored, ok := s[a]; ok && stored == token {
+		delete(s, a)
+		return true, nil
+	}
+	return false, nil
 }
 
 // withTestStore gives o a store holding token, the token this run's API
@@ -123,6 +132,125 @@ func TestListKeepsANewerToken(t *testing.T) {
 	}
 	if got, err := store.Get(a); err != nil || got != newer {
 		t.Errorf("stored token = %q (%v), want the newer one", got, err)
+	}
+}
+
+// stored gives the screens a store holding token, and its account.
+func stored(t *testing.T, token string) (testStore, auth.Account) {
+	t.Helper()
+	store := testStore{}
+	a := auth.Account{Profile: "test"}
+	if err := store.Set(a, token); err != nil {
+		t.Fatal(err)
+	}
+	return store, a
+}
+
+// A 401 to the names request is the list's 401 too: polling stops, the
+// token goes, and the screen says to sign in.
+func TestListDropsTheTokenOnAWorkspaces401(t *testing.T) {
+	api := openable()
+	api.set(func() { api.wsErr = unauthorized })
+	store, a := stored(t, testToken)
+	h := handoff(t, api, Options{Store: store, Account: a, Token: testToken})
+	if !h.app.signedOut {
+		t.Fatal("the names request's 401 didn't sign the list out")
+	}
+	if _, err := store.Get(a); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the names request's 401 left the token stored: %v", err)
+	}
+}
+
+// A 401 to a take back's request signs out and drops the token.
+func TestTakeBackDropsTheTokenOnTheAPIs401(t *testing.T) {
+	api := openable()
+	store, a := stored(t, testToken)
+	h := handoff(t, api, Options{Store: store, Account: a, Token: testToken})
+	h.to("conv-held")
+	api.set(func() { api.convErr = unauthorized })
+	h.key("T")
+	h.flush()
+	if !h.app.signedOut {
+		t.Error("the take back's 401 didn't sign the list out")
+	}
+	if _, err := store.Get(a); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the take back's 401 left the token stored: %v", err)
+	}
+}
+
+// attach401 is the list's attach endpoints: the first request is the
+// API's own 401.
+type attach401 struct{ *fakeAPI }
+
+func (attach401) AttachInfo(context.Context, string) (*client.AttachInfo, error) {
+	return nil, unauthorized
+}
+
+func (attach401) Takeover(context.Context, string, client.TakeoverRequest) (*client.Takeover, error) {
+	return nil, unauthorized
+}
+
+func (attach401) Heartbeat(context.Context, string, string) (*client.Hold, error) {
+	return nil, unauthorized
+}
+
+// A 401 to an attach's request signs out and drops the token.
+func TestAttachDropsTheTokenOnTheAPIs401(t *testing.T) {
+	api := openable()
+	api.convs["conv-attn"].Tasks = []client.Task{{ID: "t-attn", Kind: "agent", Status: client.TaskRunning}}
+	store, a := stored(t, testToken)
+	h := handoff(t, api, Options{Store: store, Account: a, Token: testToken, Attach: &Attach{API: attach401{api}}})
+	h.to("conv-attn")
+	h.key("a")
+	h.flush()
+	if !h.app.signedOut {
+		t.Error("the attach's 401 didn't sign the list out")
+	}
+	if _, err := store.Get(a); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the attach's 401 left the token stored: %v", err)
+	}
+}
+
+// countingStore counts the 401 rule's delete attempts, and can fail
+// them.
+type countingStore struct {
+	testStore
+	deletes int
+	err     error
+}
+
+func (s *countingStore) DeleteIf(a auth.Account, token string) (bool, error) {
+	s.deletes++
+	if s.err != nil {
+		return false, s.err
+	}
+	return s.testStore.DeleteIf(a, token)
+}
+
+// A late conversation 401 after the list signed out doesn't delete
+// again or replace the first answer.
+func TestLate401KeepsTheFirstSignedOutAnswer(t *testing.T) {
+	api := openable()
+	store := &countingStore{testStore: testStore{}, err: errors.New("device busy")}
+	a := auth.Account{Profile: "test"}
+	if err := store.Set(a, testToken); err != nil {
+		t.Fatal(err)
+	}
+	h := handoff(t, api, Options{Store: store, Account: a, Token: testToken})
+	api.set(func() { api.err = unauthorized })
+	h.send(refreshMsg{})
+	h.flush()
+	if store.deletes != 1 || h.app.pollErr == nil || !strings.Contains(h.app.pollErr.Error(), "device busy") {
+		t.Fatalf("after the list's 401: %d deletes, answer %v; want one delete that says why", store.deletes, h.app.pollErr)
+	}
+	first := h.app.pollErr
+	h.send(conversation.SignedOutMsg{Err: unauthorized})
+	h.flush()
+	if store.deletes != 1 {
+		t.Errorf("%d delete attempts, want the sign-out to run once", store.deletes)
+	}
+	if h.app.pollErr != first {
+		t.Errorf("a late 401 replaced the first answer: %v, want %v", h.app.pollErr, first)
 	}
 }
 

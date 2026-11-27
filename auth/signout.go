@@ -19,8 +19,9 @@ var ErrSignedOut = errors.New("signed out: run `loomux login`")
 // token. Every such request's error goes through it.
 //
 // The API's 401 (client.Unauthorized) means the token is dead: it is
-// deleted from the store and the result is ErrSignedOut, which also says
-// so if the token couldn't be deleted. Any other err, nil included, is
+// deleted from the store, in one step with reading it (Store.DeleteIf),
+// and the result is ErrSignedOut, which also says so if the token
+// couldn't be deleted. Any other err, nil included, is
 // returned as it is: a network failure, a server error or an auth
 // proxy's page says nothing about the token.
 //
@@ -36,21 +37,14 @@ func SignedOut(s Store, a Account, token string, err error) error {
 	return ErrSignedOut
 }
 
-// drop deletes the account's stored token if it is still token. A
-// different one is a newer login's, made since token was read (`loomux
-// login` in another terminal): it isn't the one the server refused, and
-// it stays.
+// drop deletes the account's stored token if it is still token, in one
+// step with reading it. A different one is a newer login's, made since
+// token was read (`loomux login` in another terminal): it isn't the one
+// the server refused, and it stays, also when the login writes while the
+// delete runs.
 func drop(s Store, a Account, token string) error {
-	stored, err := s.Get(a)
-	switch {
-	case errors.Is(err, ErrNotFound):
-		return nil
-	case err != nil:
-		return err
-	case stored != token:
-		return nil
-	}
-	return s.Delete(a)
+	_, err := s.DeleteIf(a, token)
+	return err
 }
 
 // revokeTimeout bounds asking the server to end a session.

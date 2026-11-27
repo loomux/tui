@@ -279,6 +279,7 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 		if msg.rel != nil {
 			a.unshown.said(msg.rel)
 			a.notice = msg.lead + clean(msg.rel.Error())
+			a.signOutOn401(msg.rel)
 		}
 	}
 	return nil
@@ -287,6 +288,10 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 func (a *App) gotTask(msg taskMsg) tea.Cmd {
 	st := msg.st
 	if st != a.starting {
+		return nil
+	}
+	if a.signOutOn401(msg.err) {
+		a.settle(st)
 		return nil
 	}
 	switch {
@@ -467,6 +472,10 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	if st != a.starting {
 		return nil // a failed release in it is Close's to say
 	}
+	if a.signOutOn401(msg.err) {
+		a.settle(st)
+		return nil
+	}
 	// A hold the takeover took and couldn't give back is said here: in
 	// the footer after a cancel, else with the rest of the error.
 	var rel *attach.ReleaseError
@@ -628,6 +637,9 @@ func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
 			a.notice = "couldn't attach: " + clean(msg.err.Error())
 		}
 		return a.giveBack("couldn't attach, and ")
+	}
+	if a.signOutOn401(msg.err) {
+		return nil
 	}
 	// A signal while the attach had the terminal ended the attach, which
 	// released the hold on its way out, or says why it couldn't. An

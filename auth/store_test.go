@@ -2,10 +2,12 @@ package auth
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -13,10 +15,18 @@ import (
 )
 
 // No test reaches the real keyring: every one runs against go-keyring's
-// in-memory mock, or a mock that fails.
+// in-memory mock, or a mock that fails. The state directory is a
+// temporary one, so the stores' lock files stay out of the real one.
 func TestMain(m *testing.M) {
 	keyring.MockInit()
-	os.Exit(m.Run())
+	state, err := os.MkdirTemp("", "loomux-state-*")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_STATE_HOME", state)
+	code := m.Run()
+	os.RemoveAll(state)
+	os.Exit(code)
 }
 
 const token = "q8yG0f2bS1v4mJ0xZt7KcW9hN3eLr5aPdU6iO2sYxQk" // the shape of a real one: 32 bytes, base64url
@@ -136,6 +146,82 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// DeleteIf drops only the token it is given, and says whether it did.
+func TestStoreDeleteIf(t *testing.T) {
+	for name, s := range stores(t) {
+		t.Run(name, func(t *testing.T) {
+			a := Account{Profile: "deleteif", Server: acct.Server}
+			t.Cleanup(func() { _ = s.Delete(a) })
+			if deleted, err := s.DeleteIf(a, token); deleted || err != nil {
+				t.Errorf("DeleteIf with nothing stored = %v, %v; want false, nil", deleted, err)
+			}
+			if err := s.Set(a, token); err != nil {
+				t.Fatal(err)
+			}
+			if deleted, err := s.DeleteIf(a, token+"x"); deleted || err != nil {
+				t.Errorf("DeleteIf of another token = %v, %v; want false, nil", deleted, err)
+			}
+			if got, err := s.Get(a); err != nil || got != token {
+				t.Errorf("a different token was deleted: Get = %q, %v", got, err)
+			}
+			if deleted, err := s.DeleteIf(a, token); !deleted || err != nil {
+				t.Errorf("DeleteIf of the stored token = %v, %v; want true, nil", deleted, err)
+			}
+			if _, err := s.Get(a); !errors.Is(err, ErrNotFound) {
+				t.Errorf("Get after DeleteIf = %v, want ErrNotFound", err)
+			}
+		})
+	}
+}
+
+// A login that stores a new token while a 401's compare-and-delete is
+// running keeps it: the comparison and the delete are one locked step,
+// so the login waits for the delete and then writes.
+func TestStoreDeleteIfKeepsATokenStoredWhileItRuns(t *testing.T) {
+	for name, s := range stores(t) {
+		t.Run(name, func(t *testing.T) {
+			a := Account{Profile: "interleave", Server: acct.Server}
+			old, newer := token, token+"2"
+			if err := s.Set(a, old); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.Delete(a) })
+			deleter := s.(interface {
+				deleteIf(Account, string, func()) (bool, error)
+			})
+			login := make(chan error, 1)
+			completed := false
+			between := func() {
+				started := make(chan struct{})
+				go func() {
+					close(started)
+					login <- s.Set(a, newer)
+				}()
+				<-started
+				select {
+				case err := <-login:
+					completed = true
+					t.Errorf("the login stored its token while the delete held the store: %v", err)
+				case <-time.After(50 * time.Millisecond):
+					// It is waiting for the lock, as it must.
+				}
+			}
+			deleted, err := deleter.deleteIf(a, old, between)
+			if err != nil || !deleted {
+				t.Fatalf("deleteIf = %v, %v; want true, nil", deleted, err)
+			}
+			if !completed {
+				if err := <-login; err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got, err := s.Get(a); err != nil || got != newer {
+				t.Errorf("Get after the interleaved login = %q, %v; want the newer token", got, err)
+			}
+		})
+	}
+}
+
 // The same profile name on another server is another account: a token is
 // never sent to a server it wasn't issued by.
 func TestStoreServerChange(t *testing.T) {
@@ -236,12 +322,17 @@ func TestKeyringUnavailable(t *testing.T) {
 			t.Errorf("%s error repeats the token", op)
 		}
 	}
-	entries, err := os.ReadDir(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("the keyring failed and %s now has %v: it fell back to a file", state, entries)
+	walkErr := filepath.WalkDir(state, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".token") {
+			t.Errorf("the keyring failed and left a token file, %s: it fell back to a file", path)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatal(walkErr)
 	}
 }
 

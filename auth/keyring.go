@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/zalando/go-keyring"
 )
@@ -47,6 +48,11 @@ func (s *KeyringStore) Set(a Account, tok string) error {
 	if err := checkToken(tok); err != nil {
 		return fmt.Errorf("keyring: %w", err)
 	}
+	unlock, err := s.lock(a)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := keyring.Set(keyringService, a.String(), tok); err != nil {
 		return s.unavailable(err)
 	}
@@ -57,6 +63,65 @@ func (s *KeyringStore) Delete(a Account) error {
 	if err := a.check(); err != nil {
 		return fmt.Errorf("keyring: %w", err)
 	}
+	unlock, err := s.lock(a)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.delete(a)
+}
+
+// DeleteIf removes the account's token from the keyring if it still is
+// token. The read and the delete are one step under the store's lock, so
+// a login that stores another token meanwhile keeps it.
+func (s *KeyringStore) DeleteIf(a Account, token string) (bool, error) {
+	return s.deleteIf(a, token, nil)
+}
+
+// deleteIf is DeleteIf; between, when not nil, runs after the stored
+// token matched and before it is deleted, for the test that interleaves
+// a login. It runs with the lock held, so a login there waits.
+func (s *KeyringStore) deleteIf(a Account, token string, between func()) (bool, error) {
+	if err := a.check(); err != nil {
+		return false, fmt.Errorf("keyring: %w", err)
+	}
+	unlock, err := s.lock(a)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	stored, err := s.Get(a)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	case stored != token:
+		return false, nil
+	}
+	if between != nil {
+		between()
+	}
+	if err := s.delete(a); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// lock is the store's lock for the account. The keyring has no
+// compare-and-swap, so the lock file is what makes DeleteIf one step
+// against a login in another process; it lives in the state directory,
+// beside the file store's.
+func (s *KeyringStore) lock(a Account) (func(), error) {
+	state, err := StateDir()
+	if err != nil {
+		return nil, fmt.Errorf("keyring: token store lock: %w", err)
+	}
+	return lockAccount(filepath.Join(state, ".locks"), a)
+}
+
+// delete removes the keyring entry, its caller holding the lock.
+func (s *KeyringStore) delete(a Account) error {
 	err := keyring.Delete(keyringService, a.String())
 	if err == nil || errors.Is(err, keyring.ErrNotFound) {
 		return nil

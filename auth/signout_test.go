@@ -23,6 +23,8 @@ type failingDelete struct {
 
 func (f failingDelete) Delete(Account) error { return f.err }
 
+func (f failingDelete) DeleteIf(Account, string) (bool, error) { return false, f.err }
+
 // Logout ends the session on the server first, then deletes the token.
 func TestLogoutRevokesThenDeletes(t *testing.T) {
 	ls := newLinkServer(t)
