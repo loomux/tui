@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
 )
 
@@ -65,6 +66,9 @@ func (a *App) poll() tea.Cmd {
 
 func (a *App) gotPage(msg pageMsg) tea.Cmd {
 	a.polling = false
+	if a.signedOut {
+		return nil // an open conversation's 401 came first: this was the last poll
+	}
 	if msg.err != nil {
 		a.pollErr = msg.err
 		if client.Unauthorized(msg.err) {
@@ -77,9 +81,6 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 		a.lastOK = a.now()
 		a.home.setRows(msg.page.Conversations, msg.page.HasMore, a.names)
 		a.nameConversation()
-	}
-	if a.signedOut {
-		return nil // an open conversation's 401 came first: this was the last poll
 	}
 	var cmds []tea.Cmd
 	if a.opening != "" && msg.err == nil {
@@ -100,11 +101,32 @@ func (a *App) gotPage(msg pageMsg) tea.Cmd {
 }
 
 // signOut is the answer to a 401, the list's or an open conversation's:
-// the token is no good and asking again won't change that. Polling
-// stops, the conversation closes, and the list says to sign in again.
+// the token is no good and asking again won't change that. auth.SignedOut
+// applies the 401 rule: it deletes the stored token when it is still the
+// one this run was made with (a newer login's stays) and says "signed
+// out: run `loomux login`". Polling stops, the conversation closes, and
+// the list shows that message.
 func (a *App) signOut(err error) {
-	a.signedOut, a.pollErr = true, err
+	if a.signedOut {
+		return // a late 401 doesn't delete again or replace the first answer
+	}
+	a.signedOut = true
+	a.pollErr = auth.ErrSignedOut
+	if a.store != nil {
+		a.pollErr = auth.SignedOut(a.store, a.account, a.token, err)
+	}
 	a.closeConversation()
+}
+
+// signOutOn401 applies the 401 rule to err, a request made with the
+// stored token: the API's own 401 signs out, anything else is left to
+// the caller. It reports whether it signed out.
+func (a *App) signOutOn401(err error) bool {
+	if !client.Unauthorized(err) {
+		return false
+	}
+	a.signOut(err)
+	return true
 }
 
 func (a *App) lacksName(rows []client.ConversationSummary) bool {
@@ -134,6 +156,9 @@ func (a *App) fetchNames() tea.Cmd {
 // else with what it had.
 func (a *App) gotNames(msg namesMsg) tea.Cmd {
 	a.namesBusy = false
+	if a.signOutOn401(msg.err) {
+		return nil
+	}
 	if msg.err == nil {
 		names := make(map[string]string, len(msg.workspaces))
 		for _, w := range msg.workspaces {

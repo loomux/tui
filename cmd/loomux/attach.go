@@ -89,11 +89,15 @@ func attachMain(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdout, stderr io.Writer) error {
-	c, cfg, err := signIn(profile, stderr)
+func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdout, stderr io.Writer) (err error) {
+	s, err := signIn(profile, stderr)
 	if err != nil {
 		return err
 	}
+	// Any request this attach makes with the stored token applies the 401
+	// rule: the API's own 401 deletes the token and says to sign in again.
+	defer func() { err = s.signedOut(err) }()
+	c := s.client
 	if taskID == "" {
 		if taskID, err = taskFor(ctx, c, id); err != nil {
 			return err
@@ -101,7 +105,7 @@ func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdo
 	}
 
 	opts := attach.Options{
-		Config: attach.Config{Prefer: cfg.Attach.Prefer, KubectlContext: cfg.Attach.Kubectl.Context},
+		Config: attach.Config{Prefer: s.cfg.Attach.Prefer, KubectlContext: s.cfg.Attach.Kubectl.Context},
 		Force:  force,
 	}
 	sess, err := attach.Take(ctx, c, taskID, opts)
@@ -135,24 +139,34 @@ func runAttach(ctx context.Context, profile, taskID, id string, force bool, stdo
 	return nil
 }
 
+// signedIn is a client of a profile's server, made with its stored
+// token, and what the 401 rule needs to drop that token.
+type signedIn struct {
+	client  *client.Client
+	cfg     *config.Config
+	store   auth.Store
+	account auth.Account
+	token   string
+}
+
 // signIn returns a client of the profile's server, signed in with the
 // profile's stored token, and the config.
-func signIn(profile string, stderr io.Writer) (*client.Client, *config.Config, error) {
+func signIn(profile string, stderr io.Writer) (*signedIn, error) {
 	path, err := config.Path()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	p, err := cfg.Select(profile, os.Getenv)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	store, err := auth.Open(cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	account := auth.AccountFor(p)
 	if w := auth.Warning(store, account); w != "" {
@@ -160,16 +174,32 @@ func signIn(profile string, stderr io.Writer) (*client.Client, *config.Config, e
 	}
 	token, err := store.Get(account)
 	if errors.Is(err, auth.ErrNotFound) {
-		return nil, nil, fmt.Errorf("not signed in to profile %q (%s): sign in with loomux login", p.Name, p.Server)
+		return nil, fmt.Errorf("not signed in to profile %q (%s): sign in with loomux login", p.Name, p.Server)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	c, err := client.New(p.Server, token)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return c, cfg, nil
+	return &signedIn{client: c, cfg: cfg, store: store, account: account, token: token}, nil
+}
+
+// signedOut applies the 401 rule to err: the API's own 401 drops the
+// stored token (if it is still this run's) and says to sign in again. A
+// release that failed alongside the 401 is kept: its hold may stay until
+// the lease runs out.
+func (s *signedIn) signedOut(err error) error {
+	if err == nil || !client.Unauthorized(err) {
+		return err
+	}
+	signedOut := auth.SignedOut(s.store, s.account, s.token, err)
+	var rel *attach.ReleaseError
+	if errors.As(err, &rel) {
+		return errors.Join(signedOut, rel)
+	}
+	return signedOut
 }
 
 // taskFor is the task `loomux attach <id>` means: the open agent task of

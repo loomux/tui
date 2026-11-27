@@ -28,6 +28,7 @@ import (
 	"github.com/Loomux/server/registry"
 
 	"github.com/Loomux/tui/attach"
+	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
 )
@@ -36,10 +37,13 @@ import (
 // agent is open, and the fake ssh's directory as PATH.
 type attachWorld struct {
 	*harness
-	srv  *apitest.Server
-	api  *client.Client
-	task *registry.Task
-	bin  string
+	srv     *apitest.Server
+	api     *client.Client
+	task    *registry.Task
+	bin     string
+	store   testStore
+	account auth.Account
+	token   string
 
 	// refuse, when set, answers a request before the server sees it.
 	refuse atomic.Pointer[func(*http.Request) int]
@@ -109,8 +113,14 @@ func newAttachWorld(t *testing.T, mode string, inTmux bool) *attachWorld {
 		w.srv.API.ServeHTTP(rw, r)
 	}))
 	t.Cleanup(front.Close)
+	w.token = w.srv.SeedLinkedSession("laptop", registry.SessionKindTUI)
+	w.account = auth.Account{Profile: "test", Server: front.URL}
+	w.store = testStore{}
+	if err := w.store.Set(w.account, w.token); err != nil {
+		t.Fatal(err)
+	}
 	var err error
-	if w.api, err = client.New(front.URL, w.srv.SeedLinkedSession("laptop", registry.SessionKindTUI)); err != nil {
+	if w.api, err = client.New(front.URL, w.token); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", w.bin)
@@ -118,6 +128,7 @@ func newAttachWorld(t *testing.T, mode string, inTmux bool) *attachWorld {
 	h := &harness{t: t, now: t0}
 	h.app = New(Options{
 		Profile: "test", API: countedAPI{w.api, &w.polls}, Keys: keymap.Default(), Now: func() time.Time { return h.now },
+		Store: w.store, Account: w.account, Token: w.token,
 		Attach: &Attach{API: w.api, Mode: mode, InTmux: inTmux, Window: windowCommand,
 			WindowEnv: []string{"LOOMUX_SERVER=https://loomux.example.net"}},
 	})
@@ -949,6 +960,136 @@ func TestCloseReportsAFailedRelease(t *testing.T) {
 	w.send(attachedMsg{err: context.Canceled, sig: syscall.SIGTERM})
 	if err := w.app.Close(); err != nil {
 		t.Errorf("Close after a clean release = %v", err)
+	}
+}
+
+// A cleanup release's 401 drops the stored token; the release failure
+// is still returned.
+func TestCloseDropsTheTokenOnARelease401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusUnauthorized
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	w.send(keyPress("a"))
+	w.feedOne()
+	var rel *attach.ReleaseError
+	err := w.app.Close()
+	if !errors.As(err, &rel) || !strings.Contains(err.Error(), "expires") {
+		t.Errorf("Close = %v, want the failed release's warning", err)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the release's 401 left the token stored: %v", err)
+	}
+}
+
+// An attach that ends with a 401 and a failed release signs out, and the
+// footer still warns that the hold may remain until its lease runs out.
+func TestAttached401KeepsTheReleaseWarning(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	failed := &attach.ReleaseError{Err: unauthorized, Expires: t0}
+	w.send(attachedMsg{err: failed})
+	if !w.app.signedOut {
+		t.Error("the attach's 401 didn't sign the list out")
+	}
+	if f := w.footer(); !strings.Contains(f, "expires by itself") {
+		t.Errorf("footer %q, want the failed release's warning", f)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the attach's 401 left the token stored: %v", err)
+	}
+}
+
+// A give-back whose release fails with a 401 says why, and drops the
+// token; the full error is what the footer gets.
+func TestGiveBackDropsTheTokenOnARelease401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusUnauthorized
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	w.send(keyPress("a"))
+	w.feedOne()
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Fatal("no hold to give back")
+	}
+	w.harness.out = nil // the start is over: only the give-back's answer remains
+	w.app.starting = nil
+	w.run(w.app.giveBack("attach cancelled, and "))
+	w.flush()
+	if !w.app.signedOut {
+		t.Error("the give-back's 401 didn't sign the list out")
+	}
+	if f := w.footer(); !strings.Contains(f, "expires by itself") {
+		t.Errorf("footer %q, want the failed release's warning", f)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the give-back's 401 left the token stored: %v", err)
+	}
+}
+
+// A heartbeat 401 carried by a give-back is applied even when there is no
+// release failure to show.
+func TestGiveBackAppliesAHeartbeat401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.app.attachUpdate(gaveBackMsg{err: unauthorized, lead: "attach cancelled, and "})
+	if !w.app.signedOut {
+		t.Error("the heartbeat's 401 didn't sign the list out")
+	}
+	if f := w.frame(); !strings.Contains(f, "loomux login") {
+		t.Errorf("screen:\n%s\nwant the sign-in command", f)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the heartbeat's 401 left the token stored: %v", err)
+	}
+}
+
+// holdingTakeover waits for the test, then answers 401: a takeover in
+// flight when the screens stop.
+type holdingTakeover struct {
+	AttachAPI
+	entered chan struct{}
+	answer  chan struct{}
+}
+
+func (h *holdingTakeover) Takeover(context.Context, string, client.TakeoverRequest) (*client.Takeover, error) {
+	close(h.entered)
+	<-h.answer
+	return nil, unauthorized
+}
+
+// A takeover 401 that arrives after the screens stopped still drops the
+// token: Close keeps the whole pending error.
+func TestCloseAppliesAnInFlightTakeover401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	api := &holdingTakeover{AttachAPI: w.app.attach.API, entered: make(chan struct{}), answer: make(chan struct{})}
+	w.app.attach.API = api
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := &starting{ctx: ctx, cancel: cancel, conv: w.task.ConversationID, task: w.task.ID}
+	w.app.starting = st
+	cmd := w.app.take(st)
+	taken := make(chan tea.Msg, 1)
+	go func() { taken <- cmd() }()
+	<-api.entered
+	closed := make(chan error, 1)
+	go func() { closed <- w.app.Close() }()
+	close(api.answer)
+	<-taken
+	if err := <-closed; !client.Unauthorized(err) {
+		t.Errorf("Close = %v, want the pending takeover's 401", err)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the pending takeover's 401 left the token stored: %v", err)
 	}
 }
 

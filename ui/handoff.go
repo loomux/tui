@@ -150,6 +150,9 @@ func heldTasks(tasks []client.Task) []client.Task {
 // gotTakeBack says how the take back went and polls the list at once.
 func (a *App) gotTakeBack(msg takeBackMsg) tea.Cmd {
 	a.takingBack = false
+	if a.signOutOn401(msg.err) {
+		return nil
+	}
 	switch {
 	case msg.err != nil:
 		a.notice = "couldn't take it back: " + clean(msg.err.Error())

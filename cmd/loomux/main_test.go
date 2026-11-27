@@ -47,7 +47,16 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(run(strings.Fields(args), os.Stdout, os.Stderr))
 	}
-	os.Exit(m.Run())
+	// The keyring's lock files go under the home directory: keep them out
+	// of the real one.
+	dir, err := os.MkdirTemp("", "loomux-test-*")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HOME", filepath.Join(dir, "home"))
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestVersion(t *testing.T) {
@@ -155,6 +164,9 @@ func TestNoCommandStartsTheList(t *testing.T) {
 	c, ok := o.API.(*client.Client)
 	if !ok || c.Server() != "https://loomux.example.net" {
 		t.Errorf("API = %#v, want a client of the test profile's server", o.API)
+	}
+	if o.Store == nil || o.Account.Profile != "test" || o.Account.Server != "https://loomux.example.net" || o.Token != "token-test" {
+		t.Error("the list wasn't given the profile's stored token for its 401 rule")
 	}
 	if o.Keys == nil || o.Keys.Keys(keymap.Attach)[0] != "A" {
 		t.Errorf("keys = %v, want the config's keymap", o.Keys)

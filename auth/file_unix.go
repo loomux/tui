@@ -6,7 +6,10 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"sync"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // openNoFollow opens path for reading, failing on a symlink rather than
@@ -27,4 +30,28 @@ func isSymlinkErr(err error) bool {
 func ownedByMe(fi fs.FileInfo) bool {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	return ok && int(st.Uid) == os.Getuid()
+}
+
+// fileLocks serialises holders in this process: flock alone orders the
+// operations across processes, but not two goroutines here for the race
+// detector, and a map in an in-memory store read by both needs it.
+var fileLocks sync.Map // path -> *sync.Mutex
+
+// lockFile waits for the file's exclusive advisory lock.
+func lockFile(f *os.File) error {
+	m, _ := fileLocks.LoadOrStore(f.Name(), &sync.Mutex{})
+	m.(*sync.Mutex).Lock()
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		m.(*sync.Mutex).Unlock()
+		return err
+	}
+	return nil
+}
+
+// unlockFile releases lockFile's lock.
+func unlockFile(f *os.File) {
+	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	if m, ok := fileLocks.Load(f.Name()); ok {
+		m.(*sync.Mutex).Unlock()
+	}
 }

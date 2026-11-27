@@ -23,6 +23,10 @@ type heartbeat struct {
 	mu sync.Mutex
 	// goneWhy is that answer.
 	goneWhy error
+	// tokenErr is the API's 401, kept also when a release that was
+	// beginning cancelled the heartbeat: the token is refused whatever
+	// the release's own outcome.
+	tokenErr error
 	// expires is when the lease runs out by this machine's clock: the
 	// lease's length after the last renewal.
 	expires time.Time
@@ -54,6 +58,16 @@ func (s *Session) startHeartbeat() {
 			rctx, rcancel := context.WithTimeout(ctx, s.beatTimeout)
 			hold, err := s.api.Heartbeat(rctx, s.TaskID, s.Hold.ID)
 			rcancel()
+			if client.Unauthorized(err) {
+				// A 401 matters even if release has just cancelled the
+				// heartbeat: the stored token is refused all the same.
+				hb.mu.Lock()
+				hb.tokenErr = err
+				hb.mu.Unlock()
+				if ctx.Err() != nil {
+					return
+				}
+			}
 			switch {
 			case ctx.Err() != nil:
 				return // released meanwhile: the answer means nothing
@@ -120,6 +134,18 @@ func (hb *heartbeat) goneErr() error {
 	hb.mu.Lock()
 	defer hb.mu.Unlock()
 	return hb.goneWhy
+}
+
+// unauthorizedErr is the API's 401 a heartbeat saw, or nil. It is kept
+// when a release that was beginning cancelled the heartbeat, so the
+// caller can apply the 401 rule after the release.
+func (hb *heartbeat) unauthorizedErr() error {
+	if hb == nil {
+		return nil
+	}
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	return hb.tokenErr
 }
 
 // expiry is when the lease runs out by this machine's clock, or fallback

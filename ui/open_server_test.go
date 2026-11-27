@@ -8,6 +8,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ import (
 	"github.com/Loomux/server/api/apitest"
 	"github.com/Loomux/server/registry"
 
+	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/ui/conversation"
 )
@@ -65,6 +67,11 @@ type liveApp struct {
 	done    chan error
 	streams atomic.Int32
 	refuse  atomic.Bool // answer the list's polls 401
+
+	// The token store the list holds the session's token in.
+	store   testStore
+	account auth.Account
+	token   string
 }
 
 func newLiveApp(t *testing.T) *liveApp {
@@ -88,8 +95,14 @@ func newLiveApp(t *testing.T) *liveApp {
 		front.CloseClientConnections()
 		front.Close()
 	})
+	r.token = r.srv.SeedLinkedSession("laptop", registry.SessionKindTUI)
+	r.account = auth.Account{Profile: "test", Server: front.URL}
+	r.store = testStore{}
+	if err := r.store.Set(r.account, r.token); err != nil {
+		t.Fatal(err)
+	}
 	var err error
-	if r.api, err = client.New(front.URL, r.srv.SeedLinkedSession("laptop", registry.SessionKindTUI)); err != nil {
+	if r.api, err = client.New(front.URL, r.token); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -98,6 +111,9 @@ func newLiveApp(t *testing.T) *liveApp {
 func (r *liveApp) start(o Options) {
 	r.t.Helper()
 	o.Profile, o.API = "test", r.api
+	if o.Store == nil {
+		o.Store, o.Account, o.Token = r.store, r.account, r.token
+	}
 	r.app = &watched{App: New(o)}
 	// The list polls at the start and on Refresh only, so that what a
 	// test sees is the conversation's doing and not the next poll's.
@@ -151,7 +167,7 @@ func (r *liveApp) signedOutList() {
 	r.t.Helper()
 	r.until("showed the list signed out", func() bool {
 		s := r.app.shown()
-		return strings.Contains(s, "⚠ signed out") && strings.Contains(s, "Sign in again: loomux login") && !strings.Contains(s, "Done.")
+		return strings.Contains(s, "⚠ signed out") && strings.Contains(s, "signed out: run") && strings.Contains(s, "loomux login") && !strings.Contains(s, "Done.")
 	})
 }
 
@@ -217,6 +233,9 @@ func TestOpenSignedOutAgainstTheServer(t *testing.T) {
 	}
 	r.signedOutList()
 	r.noStream()
+	if _, err := r.store.Get(r.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the conversation's 401 left the token stored: %v", err)
+	}
 }
 
 // The list's own 401 behind a conversation closes it, stream and all.

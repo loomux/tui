@@ -28,11 +28,13 @@ func TestFileStoreModes(t *testing.T) {
 	if s.path(acct) != filepath.Join(dir, "test.token") {
 		t.Errorf("path = %q, want one file per profile", s.path(acct))
 	}
-	// No temporary file is left behind.
+	// No temporary file is left behind: the token file and the lock
+	// directory, nothing else.
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 1 {
-		t.Errorf("%s holds %d entries, want only the token file", dir, len(entries))
+	if len(entries) != 2 || entries[0].Name() != ".locks" || entries[1].Name() != acct.Profile+".token" {
+		t.Errorf("%s holds %v, want the token file and .locks", dir, entries)
 	}
+	assertMode(t, filepath.Join(dir, ".locks"), 0o700|os.ModeDir)
 	// The file holds the server it was issued for, and the token.
 	b, _ := os.ReadFile(s.path(acct))
 	if !strings.Contains(string(b), acct.Server) {

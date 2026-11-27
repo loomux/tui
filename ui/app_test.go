@@ -102,6 +102,9 @@ func newHarnessOpts(t *testing.T, api *fakeAPI, width, height int, o Options) *h
 	t.Helper()
 	h := &harness{t: t, api: api, now: t0}
 	o.Profile, o.API, o.Now = "test", api, func() time.Time { return h.now }
+	if o.Store == nil {
+		o = withTestStore(o, testToken)
+	}
 	if o.Browse == nil {
 		o.Browse = func(link string) error {
 			h.browsed = append(h.browsed, link)

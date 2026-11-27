@@ -590,6 +590,55 @@ func isEnded(err error, reason string) bool {
 	return errors.As(err, &ended) && ended.Reason == reason
 }
 
+// detachHeartbeat401 is an API whose heartbeat waits for the release to
+// cancel it and then answers 401, while the release itself fails for
+// another reason.
+type detachHeartbeat401 struct {
+	API
+	fail     atomic.Bool
+	inFlight chan struct{}
+	once     sync.Once
+}
+
+func (a *detachHeartbeat401) Heartbeat(ctx context.Context, taskID, holdID string) (*client.Hold, error) {
+	if !a.fail.Load() {
+		return a.API.Heartbeat(ctx, taskID, holdID)
+	}
+	a.once.Do(func() { close(a.inFlight) })
+	<-ctx.Done()
+	return nil, &client.Error{Status: http.StatusUnauthorized, Code: client.CodeUnauthorized, Message: "unauthorized"}
+}
+
+func (a *detachHeartbeat401) Release(context.Context, string, string) (*client.Release, error) {
+	return nil, errors.New("gateway down")
+}
+
+// A heartbeat 401 that arrives as the release cancels the heartbeat isn't
+// lost: the outcome carries both the 401 and the failed release.
+func TestReleaseKeepsAHeartbeat401SeenWhileDetaching(t *testing.T) {
+	w := newWorld(t)
+	w.program("ssh", "exec sleep 60")
+	api := &detachHeartbeat401{API: w.api, inFlight: make(chan struct{})}
+	s, err := take(ctx(t), api, w.task.ID, Options{}, fast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.fail.Store(true)
+	select {
+	case <-api.inFlight:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no heartbeat in flight")
+	}
+	err = s.Release(ctx(t))
+	if !client.Unauthorized(err) {
+		t.Errorf("Release = %v, want the heartbeat's 401", err)
+	}
+	var rel *ReleaseError
+	if !errors.As(err, &rel) {
+		t.Errorf("Release = %v, want the failed release too", err)
+	}
+}
+
 // While the API doesn't answer (a deploy), the attach stays up and the
 // heartbeat keeps trying; it resumes when the API is back.
 func TestHeartbeatSurvivesAnOutage(t *testing.T) {

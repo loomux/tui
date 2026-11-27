@@ -497,7 +497,17 @@ func (s *Session) release(ctx context.Context) (*client.Release, error) {
 			time.Sleep(s.releaseWait << (try - 1))
 		}
 	})
-	return s.released, s.releaseErr
+	// A 401 the heartbeat saw while this release cancelled it is part of
+	// the outcome: the token is refused whether or not the release
+	// worked.
+	switch refused := s.beat.unauthorizedErr(); {
+	case refused == nil:
+		return s.released, s.releaseErr
+	case s.releaseErr == nil:
+		return s.released, refused
+	default:
+		return s.released, errors.Join(s.releaseErr, refused)
+	}
 }
 
 // transient reports whether a request that failed with err may work if

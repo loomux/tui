@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,11 +32,12 @@ import (
 // and a signed-in profile for it: a config file and a token file, as
 // `loomux login` leaves them.
 type attachEnv struct {
-	t     *testing.T
-	srv   *apitest.Server
-	task  *registry.Task
-	token string
-	bin   string
+	t      *testing.T
+	srv    *apitest.Server
+	task   *registry.Task
+	token  string
+	server string // the front's URL, as the profile names it
+	bin    string
 	// front is the server URL in the config: a handler in front of the
 	// server that refuse, when set, may answer first, and that calls
 	// after, when set, once the server has handled a request and before
@@ -66,6 +68,7 @@ func newAttachEnv(t *testing.T, opts ...apitest.Option) *attachEnv {
 		}
 	}))
 	t.Cleanup(front.Close)
+	e.server = front.URL
 
 	config, state := t.TempDir(), t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", config)
@@ -320,6 +323,40 @@ func TestAttachSignedOut(t *testing.T) {
 	}
 	if strings.Contains(stderr, e.token) {
 		t.Error("the token is in the output")
+	}
+	state, err := auth.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.NewFileStore(state).Get(auth.Account{Profile: "test", Server: e.server}); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the refused token is still stored: %v", err)
+	}
+}
+
+// A release's 401 signs out too, and its warning that the hold may
+// remain until the lease runs out isn't lost.
+func TestAttachSignedOutKeepsTheReleaseWarning(t *testing.T) {
+	e := newAttachEnv(t)
+	e.ssh("touch " + e.file("ran"))
+	e.refuse = func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusUnauthorized
+		}
+		return 0
+	}
+	code, _, stderr := loomux("attach", "--task", e.task.ID)
+	if code != 1 || !strings.Contains(stderr, "loomux login") || !strings.Contains(stderr, "expires by itself") {
+		t.Errorf("exit %d, stderr %q; want sign-out and the hold's warning", code, stderr)
+	}
+	if !e.ran("ran") {
+		t.Error("the attach command didn't run")
+	}
+	state, err := auth.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.NewFileStore(state).Get(auth.Account{Profile: "test", Server: e.server}); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the release's 401 left the token stored: %v", err)
 	}
 }
 
