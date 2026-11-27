@@ -19,13 +19,14 @@ import (
 // temporary one, so the stores' lock files stay out of the real one.
 func TestMain(m *testing.M) {
 	keyring.MockInit()
-	state, err := os.MkdirTemp("", "loomux-state-*")
+	dir, err := os.MkdirTemp("", "loomux-test-*")
 	if err != nil {
 		panic(err)
 	}
-	os.Setenv("XDG_STATE_HOME", state)
+	os.Setenv("HOME", filepath.Join(dir, "home"))
+	os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	code := m.Run()
-	os.RemoveAll(state)
+	os.RemoveAll(dir)
 	os.Exit(code)
 }
 
@@ -219,6 +220,30 @@ func TestStoreDeleteIfKeepsATokenStoredWhileItRuns(t *testing.T) {
 				t.Errorf("Get after the interleaved login = %q, %v; want the newer token", got, err)
 			}
 		})
+	}
+}
+
+// The keyring's lock doesn't come from XDG_STATE_HOME: the keyring
+// account is the same whichever state directory a process has, so two
+// processes must take the same lock for it.
+func TestKeyringLockIgnoresTheStateDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	first, err := keyringLockDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	second, err := keyringLockDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Errorf("lock directories differ with XDG_STATE_HOME: %q and %q", first, second)
+	}
+	if !strings.HasPrefix(first, home+string(filepath.Separator)) {
+		t.Errorf("lock directory %q isn't under the home directory %q", first, home)
 	}
 }
 

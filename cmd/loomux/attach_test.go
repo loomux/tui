@@ -333,6 +333,33 @@ func TestAttachSignedOut(t *testing.T) {
 	}
 }
 
+// A release's 401 signs out too, and its warning that the hold may
+// remain until the lease runs out isn't lost.
+func TestAttachSignedOutKeepsTheReleaseWarning(t *testing.T) {
+	e := newAttachEnv(t)
+	e.ssh("touch " + e.file("ran"))
+	e.refuse = func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusUnauthorized
+		}
+		return 0
+	}
+	code, _, stderr := loomux("attach", "--task", e.task.ID)
+	if code != 1 || !strings.Contains(stderr, "loomux login") || !strings.Contains(stderr, "expires by itself") {
+		t.Errorf("exit %d, stderr %q; want sign-out and the hold's warning", code, stderr)
+	}
+	if !e.ran("ran") {
+		t.Error("the attach command didn't run")
+	}
+	state, err := auth.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.NewFileStore(state).Get(auth.Account{Profile: "test", Server: e.server}); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the release's 401 left the token stored: %v", err)
+	}
+}
+
 // A server from before holds: its command is shown as text, never run.
 func TestAttachOldServer(t *testing.T) {
 	e := newAttachEnv(t)

@@ -28,6 +28,7 @@ import (
 	"github.com/Loomux/server/registry"
 
 	"github.com/Loomux/tui/attach"
+	"github.com/Loomux/tui/auth"
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
 )
@@ -36,10 +37,13 @@ import (
 // agent is open, and the fake ssh's directory as PATH.
 type attachWorld struct {
 	*harness
-	srv  *apitest.Server
-	api  *client.Client
-	task *registry.Task
-	bin  string
+	srv     *apitest.Server
+	api     *client.Client
+	task    *registry.Task
+	bin     string
+	store   testStore
+	account auth.Account
+	token   string
 
 	// refuse, when set, answers a request before the server sees it.
 	refuse atomic.Pointer[func(*http.Request) int]
@@ -109,8 +113,14 @@ func newAttachWorld(t *testing.T, mode string, inTmux bool) *attachWorld {
 		w.srv.API.ServeHTTP(rw, r)
 	}))
 	t.Cleanup(front.Close)
+	w.token = w.srv.SeedLinkedSession("laptop", registry.SessionKindTUI)
+	w.account = auth.Account{Profile: "test", Server: front.URL}
+	w.store = testStore{}
+	if err := w.store.Set(w.account, w.token); err != nil {
+		t.Fatal(err)
+	}
 	var err error
-	if w.api, err = client.New(front.URL, w.srv.SeedLinkedSession("laptop", registry.SessionKindTUI)); err != nil {
+	if w.api, err = client.New(front.URL, w.token); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", w.bin)
@@ -118,6 +128,7 @@ func newAttachWorld(t *testing.T, mode string, inTmux bool) *attachWorld {
 	h := &harness{t: t, now: t0}
 	h.app = New(Options{
 		Profile: "test", API: countedAPI{w.api, &w.polls}, Keys: keymap.Default(), Now: func() time.Time { return h.now },
+		Store: w.store, Account: w.account, Token: w.token,
 		Attach: &Attach{API: w.api, Mode: mode, InTmux: inTmux, Window: windowCommand,
 			WindowEnv: []string{"LOOMUX_SERVER=https://loomux.example.net"}},
 	})
@@ -949,6 +960,47 @@ func TestCloseReportsAFailedRelease(t *testing.T) {
 	w.send(attachedMsg{err: context.Canceled, sig: syscall.SIGTERM})
 	if err := w.app.Close(); err != nil {
 		t.Errorf("Close after a clean release = %v", err)
+	}
+}
+
+// A cleanup release's 401 drops the stored token; the release failure
+// is still returned.
+func TestCloseDropsTheTokenOnARelease401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusUnauthorized
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	w.send(keyPress("a"))
+	w.feedOne()
+	var rel *attach.ReleaseError
+	err := w.app.Close()
+	if !errors.As(err, &rel) || !strings.Contains(err.Error(), "expires") {
+		t.Errorf("Close = %v, want the failed release's warning", err)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the release's 401 left the token stored: %v", err)
+	}
+}
+
+// An attach that ends with a 401 and a failed release signs out, and the
+// footer still warns that the hold may remain until its lease runs out.
+func TestAttached401KeepsTheReleaseWarning(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	failed := &attach.ReleaseError{Err: unauthorized, Expires: t0}
+	w.send(attachedMsg{err: failed})
+	if !w.app.signedOut {
+		t.Error("the attach's 401 didn't sign the list out")
+	}
+	if f := w.footer(); !strings.Contains(f, "expires by itself") {
+		t.Errorf("footer %q, want the failed release's warning", f)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the attach's 401 left the token stored: %v", err)
 	}
 }
 

@@ -187,12 +187,19 @@ func signIn(profile string, stderr io.Writer) (*signedIn, error) {
 }
 
 // signedOut applies the 401 rule to err: the API's own 401 drops the
-// stored token (if it is still this run's) and says to sign in again.
+// stored token (if it is still this run's) and says to sign in again. A
+// release that failed alongside the 401 is kept: its hold may stay until
+// the lease runs out.
 func (s *signedIn) signedOut(err error) error {
 	if err == nil || !client.Unauthorized(err) {
 		return err
 	}
-	return auth.SignedOut(s.store, s.account, s.token, err)
+	signedOut := auth.SignedOut(s.store, s.account, s.token, err)
+	var rel *attach.ReleaseError
+	if errors.As(err, &rel) {
+		return errors.Join(signedOut, rel)
+	}
+	return signedOut
 }
 
 // taskFor is the task `loomux attach <id>` means: the open agent task of

@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/zalando/go-keyring"
@@ -110,14 +111,25 @@ func (s *KeyringStore) deleteIf(a Account, token string, between func()) (bool, 
 
 // lock is the store's lock for the account. The keyring has no
 // compare-and-swap, so the lock file is what makes DeleteIf one step
-// against a login in another process; it lives in the state directory,
-// beside the file store's.
+// against a login in another process.
 func (s *KeyringStore) lock(a Account) (func(), error) {
-	state, err := StateDir()
+	dir, err := keyringLockDir()
 	if err != nil {
-		return nil, fmt.Errorf("keyring: token store lock: %w", err)
+		return nil, err
 	}
-	return lockAccount(filepath.Join(state, ".locks"), a)
+	return lockAccount(dir, a)
+}
+
+// keyringLockDir is where the keyring's locks live: a fixed per-user
+// path, from the home directory. It can't come from XDG_STATE_HOME: the
+// keyring account is the same whichever state directory a process was
+// given, so two processes must take the same lock for it.
+func keyringLockDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("keyring: token store lock: no home directory")
+	}
+	return filepath.Join(home, ".local", "state", "loomux", ".locks"), nil
 }
 
 // delete removes the keyring entry, its caller holding the lock.

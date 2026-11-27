@@ -264,6 +264,21 @@ func (a *App) settle(st *starting) {
 	st.cancel()
 }
 
+// signOutOnAttach401 is signOutOn401 for an attach's error: a release
+// failure it carries stays the footer's warning, since its hold may be
+// held until the lease runs out.
+func (a *App) signOutOnAttach401(err error) bool {
+	if !client.Unauthorized(err) {
+		return false
+	}
+	var rel *attach.ReleaseError
+	if errors.As(err, &rel) {
+		a.notice = "signed out, but " + clean(rel.Error())
+	}
+	a.signOut(err)
+	return true
+}
+
 // attachUpdate handles the attach's own messages.
 func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
@@ -290,7 +305,7 @@ func (a *App) gotTask(msg taskMsg) tea.Cmd {
 	if st != a.starting {
 		return nil
 	}
-	if a.signOutOn401(msg.err) {
+	if a.signOutOnAttach401(msg.err) {
 		a.settle(st)
 		return nil
 	}
@@ -472,7 +487,7 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	if st != a.starting {
 		return nil // a failed release in it is Close's to say
 	}
-	if a.signOutOn401(msg.err) {
+	if a.signOutOnAttach401(msg.err) {
 		a.settle(st)
 		return nil
 	}
@@ -638,9 +653,6 @@ func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
 		}
 		return a.giveBack("couldn't attach, and ")
 	}
-	if a.signOutOn401(msg.err) {
-		return nil
-	}
 	// A signal while the attach had the terminal ended the attach, which
 	// released the hold on its way out, or says why it couldn't. An
 	// interrupt is the person's ctrl+c at the command (ssh asking for a
@@ -649,12 +661,16 @@ func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
 	var rel *attach.ReleaseError
 	if msg.sig != nil && msg.sig != os.Interrupt {
 		// A release that failed on the way out is said once the screens
-		// have ended: Close returns it.
+		// have ended: Close returns it. A 401 in it still drops the token.
 		if errors.As(msg.err, &rel) {
 			a.unshown.put(rel)
 		}
+		a.signOutOn401(msg.err)
 		a.quitting = true
 		return tea.Quit
+	}
+	if a.signOutOnAttach401(msg.err) {
+		return nil
 	}
 	switch {
 	case msg.sig != nil && errors.As(msg.err, &rel):
@@ -843,7 +859,11 @@ func (a *App) Close() error {
 		defer cancel()
 		_ = a.closeWindow(ctx, id)
 	}
-	return errors.Join(errs...)
+	err := errors.Join(errs...)
+	// A cleanup release's 401 is the stored token's 401 too: drop it
+	// before the screens end. The release failure is still returned.
+	a.signOutOn401(err)
+	return err
 }
 
 // attachExec is the attach routine as Bubble Tea runs it with the

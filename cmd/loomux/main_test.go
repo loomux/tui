@@ -47,7 +47,16 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(run(strings.Fields(args), os.Stdout, os.Stderr))
 	}
-	os.Exit(m.Run())
+	// The keyring's lock files go under the home directory: keep them out
+	// of the real one.
+	dir, err := os.MkdirTemp("", "loomux-test-*")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HOME", filepath.Join(dir, "home"))
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestVersion(t *testing.T) {
