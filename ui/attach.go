@@ -141,27 +141,31 @@ func (o *opened) take() string {
 	return id
 }
 
-// failures keeps the releases that didn't reach the server until the
-// screens have said them, or, if the screens end first, until Close
-// returns them: such a hold stays until its lease runs out, which the
-// person has to know. Each is said once.
+// failures keeps the cleanup errors the screens may have to say later
+// until they have said them, or, if the screens end first, until Close
+// returns them and applies the 401 rule: a release that didn't reach the
+// server leaves a hold until its lease runs out, and a 401 means a token
+// to drop. Each is said once.
 type failures struct {
 	mu   sync.Mutex
-	errs []*attach.ReleaseError
+	errs []error
 }
 
-// put keeps rel until it is said.
-func (f *failures) put(rel *attach.ReleaseError) {
+// put keeps err until it is said.
+func (f *failures) put(err error) {
+	if err == nil {
+		return
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.errs = append(f.errs, rel)
+	f.errs = append(f.errs, err)
 }
 
-// said drops rel: the screens have shown it.
-func (f *failures) said(rel *attach.ReleaseError) {
+// said drops err: the screens have shown it.
+func (f *failures) said(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.errs = slices.DeleteFunc(f.errs, func(e *attach.ReleaseError) bool { return e == rel })
+	f.errs = slices.DeleteFunc(f.errs, func(e error) bool { return e == err })
 }
 
 // take returns the failures not yet said, and drops them.
@@ -209,10 +213,11 @@ type (
 		err error
 	}
 	// gaveBackMsg is the release of a hold taken for an attach that isn't
-	// happening: rel if it failed, also kept in App.unshown until said,
+	// happening: err, the whole release outcome (its release failure and
+	// any 401 the heartbeat saw), also kept in App.unshown until said,
 	// after lead.
 	gaveBackMsg struct {
-		rel  *attach.ReleaseError
+		err  error
 		lead string
 	}
 	// attachedMsg is the attach, over: the terminal is the screens' again.
@@ -291,10 +296,10 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 	case attachedMsg:
 		return a.gotAttached(msg)
 	case gaveBackMsg:
-		if msg.rel != nil {
-			a.unshown.said(msg.rel)
-			a.notice = msg.lead + clean(msg.rel.Error())
-			a.signOutOn401(msg.rel)
+		if msg.err != nil {
+			a.unshown.said(msg.err)
+			a.notice = msg.lead + clean(msg.err.Error())
+			a.signOutOnAttach401(msg.err)
 		}
 	}
 	return nil
@@ -474,9 +479,11 @@ func (a *App) take(st *starting) tea.Cmd {
 		if err == nil {
 			a.held.put(sess)
 		}
+		// Keep the whole error, not just a release failure: a 401 in it
+		// must reach Close if the screens stop before the message does.
 		var rel *attach.ReleaseError
-		if errors.As(err, &rel) {
-			a.unshown.put(rel)
+		if client.Unauthorized(err) || errors.As(err, &rel) {
+			a.unshown.put(err)
 		}
 		return takenMsg{st, err}
 	}
@@ -487,19 +494,19 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	if st != a.starting {
 		return nil // a failed release in it is Close's to say
 	}
+	// This handler takes the error from here, whether it says it now or
+	// signs out with it.
+	a.unshown.said(msg.err)
 	if a.signOutOnAttach401(msg.err) {
 		a.settle(st)
 		return nil
 	}
 	// A hold the takeover took and couldn't give back is said here: in
 	// the footer after a cancel, else with the rest of the error.
-	var rel *attach.ReleaseError
-	if errors.As(msg.err, &rel) {
-		a.unshown.said(rel)
-	}
 	if st.cancelled {
 		a.settle(st)
-		if rel != nil {
+		var rel *attach.ReleaseError
+		if errors.As(msg.err, &rel) {
 			a.notice = "attach cancelled, but " + clean(rel.Error())
 		}
 		return a.giveBack("attach cancelled, but ")
@@ -540,11 +547,11 @@ func (a *App) giveBack(lead string) tea.Cmd {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
-		var rel *attach.ReleaseError
-		if errors.As(sess.Release(ctx), &rel) {
-			a.unshown.put(rel) // for the footer, or for Close if the screens end first
+		err := sess.Release(ctx)
+		if err != nil {
+			a.unshown.put(err) // for the footer, or for Close if the screens end first
 		}
-		return gaveBackMsg{rel, lead}
+		return gaveBackMsg{err: err, lead: lead}
 	}
 }
 

@@ -132,9 +132,31 @@ func Is(err error, code string) bool {
 // Unauthorized reports whether err is the API's 401: the token is unknown,
 // revoked or expired. A request made with the stored token deletes it and
 // signs out (the design's "Error handling").
+//
+// It looks through a joined error's every branch: errors.As stops at the
+// first *Error, and a release's 403 or 503 must not hide a heartbeat's
+// 401 beside it.
 func Unauthorized(err error) bool {
-	var e *Error
-	return errors.As(err, &e) && e.Status == http.StatusUnauthorized
+	for err != nil {
+		var e *Error
+		if errors.As(err, &e) && e.Status == http.StatusUnauthorized {
+			return true
+		}
+		switch u := err.(type) {
+		case interface{ Unwrap() []error }:
+			for _, branch := range u.Unwrap() {
+				if Unauthorized(branch) {
+					return true
+				}
+			}
+			return false
+		case interface{ Unwrap() error }:
+			err = u.Unwrap()
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // InterceptedError is a response that isn't the API's: an HTML page, a

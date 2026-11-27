@@ -1004,6 +1004,95 @@ func TestAttached401KeepsTheReleaseWarning(t *testing.T) {
 	}
 }
 
+// A give-back whose release fails with a 401 says why, and drops the
+// token; the full error is what the footer gets.
+func TestGiveBackDropsTheTokenOnARelease401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	refuse := func(r *http.Request) int {
+		if strings.HasSuffix(r.URL.Path, "/release") {
+			return http.StatusUnauthorized
+		}
+		return 0
+	}
+	w.refuse.Store(&refuse)
+	w.send(keyPress("a"))
+	w.feedOne()
+	if h := w.srv.ActiveHold(w.task.ID); h == nil {
+		t.Fatal("no hold to give back")
+	}
+	w.harness.out = nil // the start is over: only the give-back's answer remains
+	w.app.starting = nil
+	w.run(w.app.giveBack("attach cancelled, and "))
+	w.flush()
+	if !w.app.signedOut {
+		t.Error("the give-back's 401 didn't sign the list out")
+	}
+	if f := w.footer(); !strings.Contains(f, "expires by itself") {
+		t.Errorf("footer %q, want the failed release's warning", f)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the give-back's 401 left the token stored: %v", err)
+	}
+}
+
+// A heartbeat 401 carried by a give-back is applied even when there is no
+// release failure to show.
+func TestGiveBackAppliesAHeartbeat401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.app.attachUpdate(gaveBackMsg{err: unauthorized, lead: "attach cancelled, and "})
+	if !w.app.signedOut {
+		t.Error("the heartbeat's 401 didn't sign the list out")
+	}
+	if f := w.frame(); !strings.Contains(f, "loomux login") {
+		t.Errorf("screen:\n%s\nwant the sign-in command", f)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the heartbeat's 401 left the token stored: %v", err)
+	}
+}
+
+// holdingTakeover waits for the test, then answers 401: a takeover in
+// flight when the screens stop.
+type holdingTakeover struct {
+	AttachAPI
+	entered chan struct{}
+	answer  chan struct{}
+}
+
+func (h *holdingTakeover) Takeover(context.Context, string, client.TakeoverRequest) (*client.Takeover, error) {
+	close(h.entered)
+	<-h.answer
+	return nil, unauthorized
+}
+
+// A takeover 401 that arrives after the screens stopped still drops the
+// token: Close keeps the whole pending error.
+func TestCloseAppliesAnInFlightTakeover401(t *testing.T) {
+	w := newAttachWorld(t, "inline", false)
+	w.ssh("touch " + w.file("ran"))
+	api := &holdingTakeover{AttachAPI: w.app.attach.API, entered: make(chan struct{}), answer: make(chan struct{})}
+	w.app.attach.API = api
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := &starting{ctx: ctx, cancel: cancel, conv: w.task.ConversationID, task: w.task.ID}
+	w.app.starting = st
+	cmd := w.app.take(st)
+	taken := make(chan tea.Msg, 1)
+	go func() { taken <- cmd() }()
+	<-api.entered
+	closed := make(chan error, 1)
+	go func() { closed <- w.app.Close() }()
+	close(api.answer)
+	<-taken
+	if err := <-closed; !client.Unauthorized(err) {
+		t.Errorf("Close = %v, want the pending takeover's 401", err)
+	}
+	if _, err := w.store.Get(w.account); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("the pending takeover's 401 left the token stored: %v", err)
+	}
+}
+
 // The screens quit while tmux was opening the window: a window that
 // opened is closed again, as a hold taken is given back.
 func TestCloseClosesAWindowNotYetShown(t *testing.T) {

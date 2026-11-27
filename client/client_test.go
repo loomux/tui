@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -156,6 +157,29 @@ func TestIs(t *testing.T) {
 	}
 	if !Unauthorized(&Error{Status: 401, Code: CodeUnauthorized}) || Unauthorized(busy) {
 		t.Error("Unauthorized is the 401")
+	}
+}
+
+// A joined error's 401 isn't hidden by an API error before it: a release's
+// 403 or 503 must not mask the heartbeat's 401 beside it.
+func TestUnauthorizedLooksThroughAJoinedError(t *testing.T) {
+	unauthorized := &Error{Status: http.StatusUnauthorized, Code: CodeUnauthorized}
+	forbidden := &Error{Status: http.StatusForbidden, Code: CodeForbidden}
+	unavailable := &Error{Status: http.StatusServiceUnavailable, Code: CodeUnavailable}
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"forbidden then unauthorized":   {errors.Join(forbidden, unauthorized), true},
+		"unavailable then unauthorized": {errors.Join(unavailable, unauthorized), true},
+		"wrapped join":                  {fmt.Errorf("release: %w", errors.Join(forbidden, unauthorized)), true},
+		"non-401s":                      {errors.Join(forbidden, unavailable), false},
+		"one non-401":                   {forbidden, false},
+		"nil":                           {nil, false},
+	} {
+		if got := Unauthorized(tc.err); got != tc.want {
+			t.Errorf("%s: Unauthorized = %v, want %v", name, got, tc.want)
+		}
 	}
 }
 
