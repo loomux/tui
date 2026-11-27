@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -141,45 +140,6 @@ func (o *opened) take() string {
 	return id
 }
 
-// failures keeps the cleanup errors and in-flight requests' 401s the
-// screens may have to apply later until they have, or, if the screens end
-// first, until Close returns them and applies the 401 rule: a release
-// that didn't reach the server leaves a hold until its lease runs out,
-// and a 401 means a token to drop. Each is said once.
-type failures struct {
-	mu   sync.Mutex
-	errs []error
-}
-
-// put keeps err until it is said.
-func (f *failures) put(err error) {
-	if err == nil {
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.errs = append(f.errs, err)
-}
-
-// said drops err: the screens have shown it.
-func (f *failures) said(err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.errs = slices.DeleteFunc(f.errs, func(e error) bool { return e == err })
-}
-
-// take returns the failures not yet said, and drops them.
-func (f *failures) take() error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	errs := make([]error, len(f.errs))
-	for i, e := range f.errs {
-		errs[i] = e
-	}
-	f.errs = nil
-	return errors.Join(errs...)
-}
-
 // dialog is text in the list's place: what an attach has to say that a
 // footer line can't hold. With yes it is a question: the yes key answers
 // it, any other key is a no. Without, it is text to read: the list's
@@ -249,7 +209,7 @@ func (a *App) startAttach() tea.Cmd {
 	a.starting = st
 	a.notice = "attaching…"
 	api := a.attach.API
-	a.work.Add(1)
+	a.work.Start()
 	return func() tea.Msg {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(st.ctx, requestTimeout)
@@ -300,7 +260,7 @@ func (a *App) attachUpdate(msg tea.Msg) tea.Cmd {
 		return a.gotAttached(msg)
 	case gaveBackMsg:
 		if msg.err != nil {
-			a.unshown.said(msg.err)
+			a.unshown.Said(msg.err)
 			a.notice = msg.lead + clean(msg.err.Error())
 			a.signOutOnAttach401(msg.err)
 		}
@@ -314,7 +274,7 @@ func (a *App) gotTask(msg taskMsg) tea.Cmd {
 	// arrive after it was cancelled. It is applied here, or, if the
 	// screens end first, by Close.
 	if a.signOutOnAttach401(msg.err) {
-		a.unshown.said(msg.err)
+		a.unshown.Said(msg.err)
 		a.settle(st)
 		return nil
 	}
@@ -371,7 +331,7 @@ func (a *App) openWindow(st *starting) tea.Cmd {
 	name := st.name
 	argv := append(append([]string(nil), a.attach.Window...), "--task", st.task)
 	env, open := a.attach.WindowEnv, a.newWindow
-	a.work.Add(1)
+	a.work.Start()
 	return func() tea.Msg {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(st.ctx, requestTimeout)
@@ -400,7 +360,7 @@ func (a *App) gotWindow(msg windowMsg) tea.Cmd {
 		if id == "" {
 			return nil
 		}
-		a.work.Add(1)
+		a.work.Start()
 		return func() tea.Msg {
 			defer a.work.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
@@ -477,7 +437,7 @@ func tmux(ctx context.Context, args ...string) (string, error) {
 // couldn't give back, in a.unshown.
 func (a *App) take(st *starting) tea.Cmd {
 	at, force := a.attach, st.force
-	a.work.Add(1)
+	a.work.Start()
 	return func() tea.Msg {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(st.ctx, requestTimeout)
@@ -490,7 +450,7 @@ func (a *App) take(st *starting) tea.Cmd {
 		// must reach Close if the screens stop before the message does.
 		var rel *attach.ReleaseError
 		if client.Unauthorized(err) || errors.As(err, &rel) {
-			a.unshown.put(err)
+			a.unshown.Put(err)
 		}
 		return takenMsg{st, err}
 	}
@@ -501,7 +461,7 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	// A 401 is the token's whatever became of the start; a release
 	// failure beside it stays the footer's warning.
 	if a.signOutOnAttach401(msg.err) {
-		a.unshown.said(msg.err)
+		a.unshown.Said(msg.err)
 		a.settle(st)
 		return nil
 	}
@@ -510,7 +470,7 @@ func (a *App) gotTaken(msg takenMsg) tea.Cmd {
 	}
 	// This handler takes the error from here, whether it says it now or
 	// signs out with it.
-	a.unshown.said(msg.err)
+	a.unshown.Said(msg.err)
 	// A hold the takeover took and couldn't give back is said here: in
 	// the footer after a cancel, else with the rest of the error.
 	if st.cancelled {
@@ -552,14 +512,14 @@ func (a *App) giveBack(lead string) tea.Cmd {
 	if sess == nil {
 		return nil
 	}
-	a.work.Add(1)
+	a.work.Start()
 	return func() tea.Msg {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
 		err := sess.Release(ctx)
 		if err != nil {
-			a.unshown.put(err) // for the footer, or for Close if the screens end first
+			a.unshown.Put(err) // for the footer, or for Close if the screens end first
 		}
 		return gaveBackMsg{err: err, lead: lead}
 	}
@@ -680,7 +640,7 @@ func (a *App) gotAttached(msg attachedMsg) tea.Cmd {
 		// A release that failed on the way out is said once the screens
 		// have ended: Close returns it. A 401 in it still drops the token.
 		if errors.As(msg.err, &rel) {
-			a.unshown.put(rel)
+			a.unshown.Put(rel)
 		}
 		a.signOutOn401(msg.err)
 		a.quitting = true
@@ -837,39 +797,34 @@ const closeWait = 5 * time.Second
 //
 // A request in flight is waited for, closeWait at most: a takeover on its
 // way is so because its answer is the only way to learn the hold to give
-// back, and any of them may answer with the API's 401, which Close applies
-// even though no message handler is left to. One still unanswered then is
-// abandoned; a hold it did take ends by itself when its lease runs out.
+// back, and any of them, the conversation's included, may answer with the
+// API's 401, which Close applies even though no message handler is left
+// to. One still unanswered then is abandoned with the attach's context
+// and the list's; a hold it did take ends by itself when its lease runs
+// out. A command the program stopped before running keeps its count: the
+// wait gives up on it rather than hang.
 //
 // Its error is what the screens had no chance to say: a release that
 // didn't reach the server (an *attach.ReleaseError), its own or that of
 // an attach a signal ended, and a request's API 401. That hold stays
 // until its lease runs out.
 func (a *App) Close() error {
+	// The conversation's requests end with it, and their answers arrive
+	// before the wait below, if they were on their way.
 	a.closeConversation()
-	done := make(chan struct{})
-	go func() {
-		a.work.Wait()
-		close(done)
-	}()
-	wait := time.NewTimer(closeWait)
-	defer wait.Stop()
-	select {
-	case <-done:
-	case <-wait.C:
-		// The requests are left to answer: their 401, if one is on its
-		// way, is what Close applies. One still unanswered now is
-		// abandoned with the takeover's context and the list's.
+	if !a.work.Wait(a.closeWait) {
+		// What is still on its way is left to answer: its 401, if one
+		// had come, is already kept; one not answered by now isn't
+		// waited for any longer.
 		a.reqCancel()
 		if st := a.starting; st != nil {
 			st.cancel()
 		}
-		<-done
 	}
 	if st := a.starting; st != nil {
 		a.settle(st)
 	}
-	errs := []error{a.unshown.take()}
+	errs := []error{a.unshown.Take()}
 	if sess := a.held.take(); sess != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()

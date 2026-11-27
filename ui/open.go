@@ -34,6 +34,7 @@ func (a *App) openConversation() tea.Cmd {
 	a.conv = conversation.New(conversation.Options{
 		Client: a.api, ID: a.convID, Profile: a.profile, Title: it.workspace,
 		Keys: a.keys, Width: a.width, Height: a.height, Now: a.now,
+		Work: &a.work, Unshown: &a.unshown,
 	})
 	return a.conv.Init()
 }

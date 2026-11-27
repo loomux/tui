@@ -102,7 +102,7 @@ func (a *App) takeBack() tea.Cmd {
 	a.takingBack = true
 	a.notice = "taking it back…"
 	api, id, who, parent := a.api, it.ConversationID, holderName(it.HeldBy), a.reqCtx
-	a.work.Add(1)
+	a.work.Start()
 	return func() tea.Msg {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(parent, takeBackTimeout)
@@ -153,7 +153,7 @@ func heldTasks(tasks []client.Task) []client.Task {
 
 // gotTakeBack says how the take back went and polls the list at once.
 func (a *App) gotTakeBack(msg takeBackMsg) tea.Cmd {
-	a.unshown.said(msg.err) // handled here, whether it says it now or signs out with it
+	a.unshown.Said(msg.err) // handled here, whether it says it now or signs out with it
 	a.takingBack = false
 	if a.signOutOn401(msg.err) {
 		return nil

@@ -27,6 +27,7 @@ import (
 
 	"github.com/Loomux/tui/client"
 	"github.com/Loomux/tui/config/keymap"
+	"github.com/Loomux/tui/internal/inflight"
 )
 
 const (
@@ -67,6 +68,12 @@ type Options struct {
 	// Now is the clock message times are told by, in its location;
 	// time.Now when nil.
 	Now func() time.Time
+	// Work counts the screen's requests in flight, and Unshown keeps
+	// their API 401s until a handler applies them, for a root that stops
+	// before the answers are handled: Close waits for Work and applies
+	// the 401 rule to Unshown. A screen made without them keeps its own.
+	Work    *inflight.Group
+	Unshown *inflight.Errors
 }
 
 // BackMsg is sent when the user leaves the screen (back). The root
@@ -134,6 +141,12 @@ type Model struct {
 	stream eventStream
 	closed bool
 
+	// work counts the screen's requests in flight, and unshown keeps
+	// their API 401s: the root's, when it has one that outlives the
+	// screen.
+	work    *inflight.Group
+	unshown *inflight.Errors
+
 	width, height int
 
 	st     state
@@ -183,6 +196,13 @@ type Model struct {
 // New returns the screen of conversation o.ID. It does nothing until the
 // command Init returns is run.
 func New(o Options) *Model {
+	work, unshown := o.Work, o.Unshown
+	if work == nil {
+		work = &inflight.Group{}
+	}
+	if unshown == nil {
+		unshown = &inflight.Errors{}
+	}
 	m := &Model{
 		api:     o.Client,
 		id:      o.ID,
@@ -198,6 +218,8 @@ func New(o Options) *Model {
 		cache:   map[string][]string{},
 		body:    viewport.New(),
 		follow:  true,
+		work:    work,
+		unshown: unshown,
 
 		helpBody: viewport.New(),
 	}
@@ -336,11 +358,23 @@ func (m *Model) fetchOlder() tea.Cmd {
 
 func (m *Model) get(page client.Page, older bool) tea.Cmd {
 	parent, api, id, inst := m.ctx, m.api, m.id, m.inst
+	m.work.Start()
 	return func() tea.Msg {
+		defer m.work.Done()
 		ctx, cancel := contextWithTimeout(parent)
 		defer cancel()
 		conv, err := api.Conversation(ctx, id, page)
+		m.keep401(err)
 		return loadedMsg{inst: inst, conv: conv, err: err, older: older, before: page.Before}
+	}
+}
+
+// keep401 keeps a request's API 401 for the root's Close: if the screens
+// end before its message is handled, the token it refused is still the
+// stored one.
+func (m *Model) keep401(err error) {
+	if client.Unauthorized(err) {
+		m.unshown.Put(err)
 	}
 }
 
@@ -349,6 +383,7 @@ func contextWithTimeout(parent context.Context) (context.Context, context.Cancel
 }
 
 func (m *Model) onLoaded(msg loadedMsg) tea.Cmd {
+	m.unshown.Said(msg.err) // taken here, whether it says it now or signs out with it
 	if client.Unauthorized(msg.err) {
 		return m.signOut(msg.err)
 	}
@@ -390,13 +425,17 @@ func (m *Model) onLoaded(msg loadedMsg) tea.Cmd {
 // after it, so the stream is read by one command at a time.
 func (m *Model) next() tea.Cmd {
 	ctx, s, inst := m.ctx, m.stream, m.inst
+	m.work.Start()
 	return func() tea.Msg {
+		defer m.work.Done()
 		ev, err := s.Next(ctx)
+		m.keep401(err)
 		return streamMsg{inst: inst, ev: ev, err: err}
 	}
 }
 
 func (m *Model) onStream(msg streamMsg) tea.Cmd {
+	m.unshown.Said(msg.err) // taken here, whether it says it now or signs out with it
 	switch {
 	case msg.err == nil:
 		return tea.Batch(m.onEvent(msg.ev), m.next())

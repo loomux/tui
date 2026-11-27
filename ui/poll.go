@@ -56,7 +56,7 @@ func (a *App) poll() tea.Cmd {
 	a.polling = true
 	a.gen++
 	api, parent := a.api, a.reqCtx
-	a.work.Add(1)
+	a.work.Start()
 	return func() tea.Msg {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(parent, requestTimeout)
@@ -68,7 +68,7 @@ func (a *App) poll() tea.Cmd {
 }
 
 func (a *App) gotPage(msg pageMsg) tea.Cmd {
-	a.unshown.said(msg.err) // handled here, whether it says it now or signs out with it
+	a.unshown.Said(msg.err) // handled here, whether it says it now or signs out with it
 	a.polling = false
 	if a.signedOut {
 		return nil // an open conversation's 401 came first: this was the last poll
@@ -138,7 +138,7 @@ func (a *App) signOutOn401(err error) bool {
 // the token the server refused is still the stored one.
 func (a *App) keep401(err error) {
 	if client.Unauthorized(err) {
-		a.unshown.put(err)
+		a.unshown.Put(err)
 	}
 }
 
@@ -155,7 +155,7 @@ func (a *App) fetchNames() tea.Cmd {
 	a.namesBusy = true
 	a.namesAt = a.now()
 	api, parent := a.api, a.reqCtx
-	a.work.Add(1)
+	a.work.Start()
 	return func() tea.Msg {
 		defer a.work.Done()
 		ctx, cancel := context.WithTimeout(parent, requestTimeout)
@@ -171,7 +171,7 @@ func (a *App) fetchNames() tea.Cmd {
 // attach waiting to name its window goes on: with the name if it came,
 // else with what it had.
 func (a *App) gotNames(msg namesMsg) tea.Cmd {
-	a.unshown.said(msg.err) // handled here, whether it says it now or signs out with it
+	a.unshown.Said(msg.err) // handled here, whether it says it now or signs out with it
 	a.namesBusy = false
 	if a.signOutOn401(msg.err) {
 		return nil

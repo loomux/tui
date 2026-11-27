@@ -412,6 +412,67 @@ func TestCloseWaitsForAnInFlightPoll401(t *testing.T) {
 	}
 }
 
+// A program can stop before Bubble Tea runs a command it was handed: the
+// request it counts never answers, so Close gives up on it after
+// closeWait instead of hanging.
+func TestCloseGivesUpOnACommandThatNeverRuns(t *testing.T) {
+	api := openable()
+	store, a := stored(t, testToken)
+	app := New(Options{Profile: "test", API: api, Store: store, Account: a, Token: testToken})
+	app.closeWait = 50 * time.Millisecond
+	// The poll and the names are asked for and the program stops: their
+	// commands are never run.
+	_ = app.poll()
+	_ = app.fetchNames()
+	start := time.Now()
+	if err := app.Close(); err != nil {
+		t.Errorf("Close = %v, want nothing to report", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("Close took %v with commands the program never ran; want it to give up", d)
+	}
+}
+
+// A conversation request's 401 whose message the screens end before
+// handling is still the token's: the conversation's requests are counted
+// and kept with the list's.
+func TestCloseDropsTheTokenOnAnUnhandledConversation401(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		setup func(h *harness, api *fakeAPI)
+	}{
+		{"conversation", func(h *harness, api *fakeAPI) {
+			h.to("conv-await")
+			api.set(func() { api.convErr = unauthorized })
+			h.send(keyPress("enter")) // the fetch's 401 waits, unhandled
+		}},
+		{"transcript", func(h *harness, api *fakeAPI) {
+			api.convs["conv-await"] = &client.Conversation{ConversationID: "conv-await", Tasks: []client.Task{
+				{ID: "t-await", Kind: "agent", Status: client.TaskRunning}}}
+			h.to("conv-await")
+			h.key("enter")
+			api.set(func() { api.turnsErr = unauthorized })
+			h.send(keyPress("p")) // the transcript's 401 waits, unhandled
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			api := openable()
+			store, a := stored(t, testToken)
+			h := handoff(t, api, Options{Store: store, Account: a, Token: testToken})
+			c.setup(h, api)
+			if len(h.out) == 0 {
+				t.Fatal("the request answered before its message could be left unhandled")
+			}
+			if err := h.app.Close(); !client.Unauthorized(err) {
+				t.Errorf("Close = %v, want the pending request's 401", err)
+			}
+			if _, err := store.Get(a); !errors.Is(err, auth.ErrNotFound) {
+				t.Errorf("the pending request's 401 left the token stored: %v", err)
+			}
+		})
+	}
+}
+
 // A 401 that isn't the API's own, such as an auth proxy's page, says
 // nothing about the token: it stays.
 func TestListKeepsTheTokenOnAProxy401(t *testing.T) {
